@@ -8,6 +8,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+	_ "taxi-service/docs"
 	"taxi-service/internal/config"
 	"taxi-service/internal/database"
 	"taxi-service/internal/handlers"
