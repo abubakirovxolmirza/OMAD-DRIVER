@@ -209,19 +209,19 @@ type Notification struct {
 
 // DriverApplication represents driver application request
 type DriverApplication struct {
-	ID           int64          `json:"id" db:"id"`
-	UserID       int64          `json:"user_id" db:"user_id"`
-	FullName     string         `json:"full_name" db:"full_name"`
-	PhoneNumber  string         `json:"phone_number" db:"phone_number"`
-	CarModel     string         `json:"car_model" db:"car_model"`
-	CarNumber    string         `json:"car_number" db:"car_number"`
-	LicenseImage string         `json:"license_image" db:"license_image"`
-	Status       string         `json:"status" db:"status"` // pending, approved, rejected
-	RejectionReason *string `json:"rejection_reason,omitempty" db:"rejection_reason"`
-	ReviewedBy   sql.NullInt64  `json:"reviewed_by" db:"reviewed_by"`
-	ReviewedAt   sql.NullTime   `json:"reviewed_at" db:"reviewed_at"`
-	CreatedAt    time.Time      `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at" db:"updated_at"`
+	ID              int64      `json:"id" db:"id"`
+	UserID          int64      `json:"user_id" db:"user_id"`
+	FullName        string     `json:"full_name" db:"full_name"`
+	PhoneNumber     string     `json:"phone_number" db:"phone_number"`
+	CarModel        string     `json:"car_model" db:"car_model"`
+	CarNumber       string     `json:"car_number" db:"car_number"`
+	LicenseImage    string     `json:"license_image" db:"license_image"`
+	Status          string     `json:"status" db:"status"` // pending, approved, rejected
+	RejectionReason *string    `json:"rejection_reason,omitempty" db:"rejection_reason"`
+	ReviewedBy      *int64     `json:"reviewed_by,omitempty" db:"reviewed_by"`
+	ReviewedAt      *time.Time `json:"reviewed_at,omitempty" db:"reviewed_at"`
+	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 // Transaction represents balance transactions
