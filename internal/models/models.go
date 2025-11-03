@@ -1,7 +1,6 @@
 package models
 
 import (
-	"database/sql"
 	"time"
 )
 
@@ -26,33 +25,33 @@ const (
 
 // User represents a user in the system
 type User struct {
-	ID           int64          `json:"id" db:"id"`
-	PhoneNumber  string         `json:"phone_number" db:"phone_number"`
-	Name         string         `json:"name" db:"name"`
-	Password     string         `json:"-" db:"password"`
-	Avatar       sql.NullString `json:"avatar" db:"avatar"`
-	Role         UserRole       `json:"role" db:"role"`
-	Language     Language       `json:"language" db:"language"`
-	IsBlocked    bool           `json:"is_blocked" db:"is_blocked"`
-	CreatedAt    time.Time      `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at" db:"updated_at"`
+	ID          int64    `json:"id" db:"id"`
+	PhoneNumber string   `json:"phone_number" db:"phone_number"`
+	Name        string   `json:"name" db:"name"`
+	Password    string   `json:"-" db:"password"`
+	Avatar      *string  `json:"avatar,omitempty" db:"avatar"`
+	Role        UserRole `json:"role" db:"role"`
+	Language    Language `json:"language" db:"language"`
+	IsBlocked   bool     `json:"is_blocked" db:"is_blocked"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // Driver represents additional driver information
 type Driver struct {
-	ID              int64          `json:"id" db:"id"`
-	UserID          int64          `json:"user_id" db:"user_id"`
-	FullName        string         `json:"full_name" db:"full_name"`
-	CarModel        string         `json:"car_model" db:"car_model"`
-	CarNumber       string         `json:"car_number" db:"car_number"`
-	LicenseImage    sql.NullString `json:"license_image" db:"license_image"`
-	Balance         float64        `json:"balance" db:"balance"`
-	Rating          float64        `json:"rating" db:"rating"`
-	TotalRatings    int            `json:"total_ratings" db:"total_ratings"`
-	Status          string         `json:"status" db:"status"` // pending, approved, rejected
-	IsActive        bool           `json:"is_active" db:"is_active"`
-	CreatedAt       time.Time      `json:"created_at" db:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at" db:"updated_at"`
+	ID           int64     `json:"id" db:"id"`
+	UserID       int64     `json:"user_id" db:"user_id"`
+	FullName     string    `json:"full_name" db:"full_name"`
+	CarModel     string    `json:"car_model" db:"car_model"`
+	CarNumber    string    `json:"car_number" db:"car_number"`
+	LicenseImage *string   `json:"license_image,omitempty" db:"license_image"`
+	Balance      float64   `json:"balance" db:"balance"`
+	Rating       float64   `json:"rating" db:"rating"`
+	TotalRatings int       `json:"total_ratings" db:"total_ratings"`
+	Status       string    `json:"status" db:"status"` // pending, approved, rejected
+	IsActive     bool      `json:"is_active" db:"is_active"`
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // Region represents a region/province
@@ -116,51 +115,51 @@ const (
 
 // Order represents both taxi and delivery orders
 type Order struct {
-	ID                    int64           `json:"id" db:"id"`
-	UserID                int64           `json:"user_id" db:"user_id"`
-	DriverID              sql.NullInt64   `json:"driver_id" db:"driver_id"`
-	OrderType             OrderType       `json:"order_type" db:"order_type"`
-	Status                OrderStatus     `json:"status" db:"status"`
+	ID                 int64       `json:"id" db:"id"`
+	UserID             int64       `json:"user_id" db:"user_id"`
+	DriverID           *int64      `json:"driver_id,omitempty" db:"driver_id"`
+	OrderType          OrderType   `json:"order_type" db:"order_type"`
+	Status             OrderStatus `json:"status" db:"status"`
 	
 	// Customer info
-	CustomerName          string          `json:"customer_name" db:"customer_name"`
-	CustomerPhone         string          `json:"customer_phone" db:"customer_phone"`
-	RecipientPhone        sql.NullString  `json:"recipient_phone" db:"recipient_phone"` // For delivery
+	CustomerName       string  `json:"customer_name" db:"customer_name"`
+	CustomerPhone      string  `json:"customer_phone" db:"customer_phone"`
+	RecipientPhone     *string `json:"recipient_phone,omitempty" db:"recipient_phone"` // For delivery
 	
 	// Location info
-	FromRegionID          int64           `json:"from_region_id" db:"from_region_id"`
-	FromDistrictID        int64           `json:"from_district_id" db:"from_district_id"`
-	ToRegionID            int64           `json:"to_region_id" db:"to_region_id"`
-	ToDistrictID          int64           `json:"to_district_id" db:"to_district_id"`
+	FromRegionID       int64 `json:"from_region_id" db:"from_region_id"`
+	FromDistrictID     int64 `json:"from_district_id" db:"from_district_id"`
+	ToRegionID         int64 `json:"to_region_id" db:"to_region_id"`
+	ToDistrictID       int64 `json:"to_district_id" db:"to_district_id"`
 	
 	// Taxi specific
-	PassengerCount        sql.NullInt64   `json:"passenger_count" db:"passenger_count"`
+	PassengerCount     *int64 `json:"passenger_count,omitempty" db:"passenger_count"`
 	
 	// Delivery specific
-	DeliveryType          sql.NullString  `json:"delivery_type" db:"delivery_type"`
+	DeliveryType       *string `json:"delivery_type,omitempty" db:"delivery_type"`
 	
 	// Schedule
-	ScheduledDate         time.Time       `json:"scheduled_date" db:"scheduled_date"`
-	TimeRangeStart        string          `json:"time_range_start" db:"time_range_start"`
-	TimeRangeEnd          string          `json:"time_range_end" db:"time_range_end"`
+	ScheduledDate      time.Time `json:"scheduled_date" db:"scheduled_date"`
+	TimeRangeStart     string    `json:"time_range_start" db:"time_range_start"`
+	TimeRangeEnd       string    `json:"time_range_end" db:"time_range_end"`
 	
 	// Pricing
-	Price                 float64         `json:"price" db:"price"`
-	ServiceFee            float64         `json:"service_fee" db:"service_fee"`
-	DiscountPercentage    float64         `json:"discount_percentage" db:"discount_percentage"`
-	FinalPrice            float64         `json:"final_price" db:"final_price"`
+	Price              float64 `json:"price" db:"price"`
+	ServiceFee         float64 `json:"service_fee" db:"service_fee"`
+	DiscountPercentage float64 `json:"discount_percentage" db:"discount_percentage"`
+	FinalPrice         float64 `json:"final_price" db:"final_price"`
 	
 	// Additional info
-	Notes                 sql.NullString  `json:"notes" db:"notes"`
-	CancellationReason    sql.NullString  `json:"cancellation_reason" db:"cancellation_reason"`
+	Notes              *string `json:"notes,omitempty" db:"notes"`
+	CancellationReason *string `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
 	
 	// Timing
-	AcceptedAt            sql.NullTime    `json:"accepted_at" db:"accepted_at"`
-	AcceptDeadline        sql.NullTime    `json:"accept_deadline" db:"accept_deadline"`
-	CompletedAt           sql.NullTime    `json:"completed_at" db:"completed_at"`
-	CancelledAt           sql.NullTime    `json:"cancelled_at" db:"cancelled_at"`
-	CreatedAt             time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt             time.Time       `json:"updated_at" db:"updated_at"`
+	AcceptedAt         *time.Time `json:"accepted_at,omitempty" db:"accepted_at"`
+	AcceptDeadline     *time.Time `json:"accept_deadline,omitempty" db:"accept_deadline"`
+	CompletedAt        *time.Time `json:"completed_at,omitempty" db:"completed_at"`
+	CancelledAt        *time.Time `json:"cancelled_at,omitempty" db:"cancelled_at"`
+	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 // Pricing represents pricing configuration between regions
@@ -186,25 +185,25 @@ type Discount struct {
 
 // Rating represents driver rating by user
 type Rating struct {
-	ID        int64          `json:"id" db:"id"`
-	OrderID   int64          `json:"order_id" db:"order_id"`
-	UserID    int64          `json:"user_id" db:"user_id"`
-	DriverID  int64          `json:"driver_id" db:"driver_id"`
-	Rating    int            `json:"rating" db:"rating"` // 1-5
-	Comment   sql.NullString `json:"comment" db:"comment"`
-	CreatedAt time.Time      `json:"created_at" db:"created_at"`
+	ID        int64     `json:"id" db:"id"`
+	OrderID   int64     `json:"order_id" db:"order_id"`
+	UserID    int64     `json:"user_id" db:"user_id"`
+	DriverID  int64     `json:"driver_id" db:"driver_id"`
+	Rating    int       `json:"rating" db:"rating"` // 1-5
+	Comment   *string   `json:"comment,omitempty" db:"comment"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
 }
 
 // Notification represents a notification
 type Notification struct {
-	ID        int64          `json:"id" db:"id"`
-	UserID    int64          `json:"user_id" db:"user_id"`
-	Title     string         `json:"title" db:"title"`
-	Message   string         `json:"message" db:"message"`
-	Type      string         `json:"type" db:"type"` // order, rating, system, etc.
-	RelatedID sql.NullInt64  `json:"related_id" db:"related_id"` // Order ID, etc.
-	IsRead    bool           `json:"is_read" db:"is_read"`
-	CreatedAt time.Time      `json:"created_at" db:"created_at"`
+	ID        int64     `json:"id" db:"id"`
+	UserID    int64     `json:"user_id" db:"user_id"`
+	Title     string    `json:"title" db:"title"`
+	Message   string    `json:"message" db:"message"`
+	Type      string    `json:"type" db:"type"` // order, rating, system, etc.
+	RelatedID *int64    `json:"related_id,omitempty" db:"related_id"` // Order ID, etc.
+	IsRead    bool      `json:"is_read" db:"is_read"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
 }
 
 // DriverApplication represents driver application request
@@ -228,11 +227,11 @@ type DriverApplication struct {
 type Transaction struct {
 	ID          int64     `json:"id" db:"id"`
 	DriverID    int64     `json:"driver_id" db:"driver_id"`
-	OrderID     sql.NullInt64 `json:"order_id" db:"order_id"`
+	OrderID     *int64    `json:"order_id,omitempty" db:"order_id"`
 	Amount      float64   `json:"amount" db:"amount"`
 	Type        string    `json:"type" db:"type"` // debit, credit, refund
 	Description string    `json:"description" db:"description"`
-	CreatedBy   sql.NullInt64 `json:"created_by" db:"created_by"` // Admin ID if manual
+	CreatedBy   *int64    `json:"created_by,omitempty" db:"created_by"` // Admin ID if manual
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }
 
