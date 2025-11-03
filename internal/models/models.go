@@ -217,7 +217,7 @@ type DriverApplication struct {
 	CarNumber    string         `json:"car_number" db:"car_number"`
 	LicenseImage string         `json:"license_image" db:"license_image"`
 	Status       string         `json:"status" db:"status"` // pending, approved, rejected
-	RejectionReason sql.NullString `json:"rejection_reason" db:"rejection_reason"`
+	RejectionReason *string `json:"rejection_reason,omitempty" db:"rejection_reason"`
 	ReviewedBy   sql.NullInt64  `json:"reviewed_by" db:"reviewed_by"`
 	ReviewedAt   sql.NullTime   `json:"reviewed_at" db:"reviewed_at"`
 	CreatedAt    time.Time      `json:"created_at" db:"created_at"`

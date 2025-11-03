@@ -77,15 +77,16 @@ func (h *AdminHandler) ReviewDriverApplication(c *gin.Context) {
 	defer tx.Rollback()
 
 	// Update application status
-	var rejectionReason sql.NullString
+	// Update application status
+	var rejectionReason *string
 	if req.Status == "rejected" && req.RejectionReason != "" {
-		rejectionReason = sql.NullString{String: req.RejectionReason, Valid: true}
+    	rejectionReason = &req.RejectionReason
 	}
 
 	_, err = tx.Exec(`
-		UPDATE driver_applications 
-		SET status = $1, rejection_reason = $2, reviewed_by = $3, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $4
+    	UPDATE driver_applications 
+    	SET status = $1, rejection_reason = $2, reviewed_by = $3, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    	WHERE id = $4
 	`, req.Status, rejectionReason, adminID, applicationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update application"})
