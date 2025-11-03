@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"fmt"
 	"net/http"
 	"time"
@@ -96,7 +95,12 @@ func (h *OrderHandler) CreateTaxiOrder(c *gin.Context) {
 
 	// Create order
 	var order models.Order
-	acceptDeadline := time.Now().Add(5 * time.Minute)
+	finalPrice := price - (price * discount / 100)
+	
+	var notes *string
+	if req.Notes != "" {
+		notes = &req.Notes
+	}
 	
 	err = database.DB.QueryRow(`
 		INSERT INTO orders (
@@ -110,7 +114,7 @@ func (h *OrderHandler) CreateTaxiOrder(c *gin.Context) {
 		req.CustomerName, req.CustomerPhone, req.FromRegionID, req.FromDistrictID,
 		req.ToRegionID, req.ToDistrictID, req.PassengerCount, scheduledDate,
 		req.TimeRangeStart, req.TimeRangeEnd, price, serviceFee, discount, finalPrice,
-		sql.NullString{String: req.Notes, Valid: req.Notes != ""}, acceptDeadline,
+		notes, acceptDeadline,
 	).Scan(&order.ID, &order.CreatedAt, &order.UpdatedAt)
 
 	if err != nil {
@@ -128,7 +132,8 @@ func (h *OrderHandler) CreateTaxiOrder(c *gin.Context) {
 	order.FromDistrictID = req.FromDistrictID
 	order.ToRegionID = req.ToRegionID
 	order.ToDistrictID = req.ToDistrictID
-	order.PassengerCount = sql.NullInt64{Int64: int64(req.PassengerCount), Valid: true}
+	passengerCount := int64(req.PassengerCount)
+	order.PassengerCount = &passengerCount
 	order.ScheduledDate = scheduledDate
 	order.TimeRangeStart = req.TimeRangeStart
 	order.TimeRangeEnd = req.TimeRangeEnd
@@ -136,7 +141,9 @@ func (h *OrderHandler) CreateTaxiOrder(c *gin.Context) {
 	order.ServiceFee = serviceFee
 	order.DiscountPercentage = discount
 	order.FinalPrice = finalPrice
-	order.Notes = sql.NullString{String: req.Notes, Valid: req.Notes != ""}
+	if req.Notes != "" {
+		order.Notes = &req.Notes
+	}
 
 	// TODO: Send notification to all drivers
 	go h.notifyDriversNewOrder(order.ID, models.OrderTypeTaxi)
@@ -188,6 +195,11 @@ func (h *OrderHandler) CreateDeliveryOrder(c *gin.Context) {
 	var order models.Order
 	acceptDeadline := time.Now().Add(5 * time.Minute)
 	
+	var notes *string
+	if req.Notes != "" {
+		notes = &req.Notes
+	}
+	
 	err = database.DB.QueryRow(`
 		INSERT INTO orders (
 			user_id, order_type, status, customer_name, customer_phone, recipient_phone,
@@ -201,7 +213,7 @@ func (h *OrderHandler) CreateDeliveryOrder(c *gin.Context) {
 		req.FromRegionID, req.FromDistrictID, req.ToRegionID, req.ToDistrictID,
 		req.DeliveryType, scheduledDate, req.TimeRangeStart, req.TimeRangeEnd,
 		price, serviceFee, 0, finalPrice,
-		sql.NullString{String: req.Notes, Valid: req.Notes != ""}, acceptDeadline,
+		notes, acceptDeadline,
 	).Scan(&order.ID, &order.CreatedAt, &order.UpdatedAt)
 
 	if err != nil {
@@ -396,10 +408,10 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	}
 
 	// Refund driver if order was accepted
-	if order.DriverID.Valid {
+	if order.DriverID != nil {
 		_, err = database.DB.Exec(`
 			UPDATE drivers SET balance = balance + $1 WHERE id = $2
-		`, order.ServiceFee, order.DriverID.Int64)
+		`, order.ServiceFee, *order.DriverID)
 		if err != nil {
 			// Log error but don't fail the request
 			fmt.Printf("Failed to refund driver: %v\n", err)
@@ -409,7 +421,7 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 		database.DB.Exec(`
 			INSERT INTO transactions (driver_id, order_id, amount, type, description)
 			VALUES ($1, $2, $3, $4, $5)
-		`, order.DriverID.Int64, order.ID, order.ServiceFee, "credit", "Refund for cancelled order")
+		`, *order.DriverID, order.ID, order.ServiceFee, "credit", "Refund for cancelled order")
 	}
 
 	// TODO: Send notification to telegram group

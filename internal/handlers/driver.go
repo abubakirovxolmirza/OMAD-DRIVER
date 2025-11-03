@@ -312,7 +312,7 @@ func (h *DriverHandler) AcceptOrder(c *gin.Context) {
 	}
 
 	// Check accept deadline
-	if order.AcceptDeadline.Valid && order.AcceptDeadline.Time.Before(time.Now()) {
+	if order.AcceptDeadline != nil && order.AcceptDeadline.Before(time.Now()) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Order acceptance deadline has passed"})
 		return
 	}

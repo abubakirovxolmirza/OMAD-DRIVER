@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -65,7 +64,7 @@ func (h *RatingHandler) CreateRating(c *gin.Context) {
 		return
 	}
 
-	if !order.DriverID.Valid {
+	if order.DriverID == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Order has no driver assigned"})
 		return
 	}
@@ -88,12 +87,16 @@ func (h *RatingHandler) CreateRating(c *gin.Context) {
 
 	// Create rating
 	var rating models.Rating
+	var comment *string
+	if req.Comment != "" {
+		comment = &req.Comment
+	}
+	
 	err = tx.QueryRow(`
 		INSERT INTO ratings (order_id, user_id, driver_id, rating, comment)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, order_id, user_id, driver_id, rating, comment, created_at
-	`, req.OrderID, userID, order.DriverID.Int64, req.Rating, 
-		sql.NullString{String: req.Comment, Valid: req.Comment != ""}).Scan(
+	`, req.OrderID, userID, *order.DriverID, req.Rating, comment).Scan(
 		&rating.ID, &rating.OrderID, &rating.UserID, &rating.DriverID, 
 		&rating.Rating, &rating.Comment, &rating.CreatedAt,
 	)
@@ -107,7 +110,7 @@ func (h *RatingHandler) CreateRating(c *gin.Context) {
 	var totalRatings int
 	err = tx.QueryRow(`
 		SELECT AVG(rating), COUNT(*) FROM ratings WHERE driver_id = $1
-	`, order.DriverID.Int64).Scan(&avgRating, &totalRatings)
+	`, *order.DriverID).Scan(&avgRating, &totalRatings)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate rating"})
 		return
@@ -115,7 +118,7 @@ func (h *RatingHandler) CreateRating(c *gin.Context) {
 
 	_, err = tx.Exec(`
 		UPDATE drivers SET rating = $1, total_ratings = $2 WHERE id = $3
-	`, avgRating, totalRatings, order.DriverID.Int64)
+	`, avgRating, totalRatings, *order.DriverID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update driver rating"})
 		return
