@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http"
 	"time"
@@ -87,7 +88,7 @@ func (h *OrderHandler) CreateTaxiOrder(c *gin.Context) {
 	}
 
 	// Calculate price
-	price, serviceFee, discount, finalPrice, err := h.calculateTaxiPrice(req.FromRegionID, req.ToRegionID, req.PassengerCount)
+	price, serviceFee, discount, finalPriceCalc, err := h.calculateTaxiPrice(req.FromRegionID, req.ToRegionID, req.PassengerCount)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -95,7 +96,7 @@ func (h *OrderHandler) CreateTaxiOrder(c *gin.Context) {
 
 	// Create order
 	var order models.Order
-	finalPrice := price - (price * discount / 100)
+	acceptDeadline := time.Now().Add(5 * time.Minute)
 	
 	var notes *string
 	if req.Notes != "" {
@@ -113,7 +114,7 @@ func (h *OrderHandler) CreateTaxiOrder(c *gin.Context) {
 	`, userID, models.OrderTypeTaxi, models.OrderStatusPending,
 		req.CustomerName, req.CustomerPhone, req.FromRegionID, req.FromDistrictID,
 		req.ToRegionID, req.ToDistrictID, req.PassengerCount, scheduledDate,
-		req.TimeRangeStart, req.TimeRangeEnd, price, serviceFee, discount, finalPrice,
+		req.TimeRangeStart, req.TimeRangeEnd, price, serviceFee, discount, finalPriceCalc,
 		notes, acceptDeadline,
 	).Scan(&order.ID, &order.CreatedAt, &order.UpdatedAt)
 
@@ -140,7 +141,7 @@ func (h *OrderHandler) CreateTaxiOrder(c *gin.Context) {
 	order.Price = price
 	order.ServiceFee = serviceFee
 	order.DiscountPercentage = discount
-	order.FinalPrice = finalPrice
+	order.FinalPrice = finalPriceCalc
 	if req.Notes != "" {
 		order.Notes = &req.Notes
 	}
