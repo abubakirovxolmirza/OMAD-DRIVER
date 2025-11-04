@@ -480,11 +480,11 @@ func (h *RegionHandler) DeleteRegion(c *gin.Context) {
 // @Description Get all districts for a specific region
 // @Tags Regions
 // @Produce json
-// @Param region_id path int true "Region ID"
+// @Param id path int true "Region ID"
 // @Success 200 {array} models.District
-// @Router /regions/{region_id}/districts [get]
+// @Router /regions/{id}/districts [get]
 func (h *RegionHandler) GetDistricts(c *gin.Context) {
-	regionID := c.Param("region_id")
+	regionID := c.Param("id")
 
 	rows, err := database.DB.Query("SELECT * FROM districts WHERE region_id = $1 ORDER BY name_uz_lat", regionID)
 	if err != nil {

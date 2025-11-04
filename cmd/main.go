@@ -126,7 +126,7 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 		{
 			regions.GET("", regionHandler.GetRegions)
 			regions.GET("/:id", regionHandler.GetRegion)
-			regions.GET("/:region_id/districts", regionHandler.GetDistricts)
+			regions.GET("/:id/districts", regionHandler.GetDistricts)
 		}
 
 		// District routes (public)
