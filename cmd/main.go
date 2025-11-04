@@ -27,9 +27,9 @@ import (
 // @license.name MIT
 // @license.url https://opensource.org/licenses/MIT
 
-// @host omad-driver.uz
+// @host 64.225.107.130
 // @BasePath /api/v1
-// @schemes https http
+// @schemes http https
 
 // @securityDefinitions.apikey BearerAuth
 // @in header
