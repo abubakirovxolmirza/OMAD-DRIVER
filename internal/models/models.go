@@ -127,10 +127,17 @@ type Order struct {
 	RecipientPhone     *string `json:"recipient_phone,omitempty" db:"recipient_phone"` // For delivery
 	
 	// Location info
-	FromRegionID       int64 `json:"from_region_id" db:"from_region_id"`
-	FromDistrictID     int64 `json:"from_district_id" db:"from_district_id"`
-	ToRegionID         int64 `json:"to_region_id" db:"to_region_id"`
-	ToDistrictID       int64 `json:"to_district_id" db:"to_district_id"`
+	FromRegionID       int64    `json:"from_region_id" db:"from_region_id"`
+	FromDistrictID     int64    `json:"from_district_id" db:"from_district_id"`
+	FromLatitude       *float64 `json:"from_latitude,omitempty" db:"from_latitude"`
+	FromLongitude      *float64 `json:"from_longitude,omitempty" db:"from_longitude"`
+	FromAddress        *string  `json:"from_address,omitempty" db:"from_address"`
+	
+	ToRegionID         int64    `json:"to_region_id" db:"to_region_id"`
+	ToDistrictID       int64    `json:"to_district_id" db:"to_district_id"`
+	ToLatitude         *float64 `json:"to_latitude,omitempty" db:"to_latitude"`
+	ToLongitude        *float64 `json:"to_longitude,omitempty" db:"to_longitude"`
+	ToAddress          *string  `json:"to_address,omitempty" db:"to_address"`
 	
 	// Taxi specific
 	PassengerCount     *int64 `json:"passenger_count,omitempty" db:"passenger_count"`

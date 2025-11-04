@@ -29,8 +29,14 @@ type CreateTaxiOrderRequest struct {
 	CustomerPhone   string    `json:"customer_phone" binding:"required"`
 	FromRegionID    int64     `json:"from_region_id" binding:"required"`
 	FromDistrictID  int64     `json:"from_district_id" binding:"required"`
+	FromLatitude    *float64  `json:"from_latitude"`
+	FromLongitude   *float64  `json:"from_longitude"`
+	FromAddress     *string   `json:"from_address"`
 	ToRegionID      int64     `json:"to_region_id" binding:"required"`
 	ToDistrictID    int64     `json:"to_district_id" binding:"required"`
+	ToLatitude      *float64  `json:"to_latitude"`
+	ToLongitude     *float64  `json:"to_longitude"`
+	ToAddress       *string   `json:"to_address"`
 	PassengerCount  int       `json:"passenger_count" binding:"required,min=1,max=4"`
 	ScheduledDate   string    `json:"scheduled_date" binding:"required"` // DD.MM.YYYY
 	TimeRangeStart  string    `json:"time_range_start" binding:"required"`
@@ -40,18 +46,24 @@ type CreateTaxiOrderRequest struct {
 
 // CreateDeliveryOrderRequest represents delivery order creation request
 type CreateDeliveryOrderRequest struct {
-	CustomerName    string `json:"customer_name" binding:"required"`
-	CustomerPhone   string `json:"customer_phone" binding:"required"`
-	RecipientPhone  string `json:"recipient_phone" binding:"required"`
-	FromRegionID    int64  `json:"from_region_id" binding:"required"`
-	FromDistrictID  int64  `json:"from_district_id" binding:"required"`
-	ToRegionID      int64  `json:"to_region_id" binding:"required"`
-	ToDistrictID    int64  `json:"to_district_id" binding:"required"`
-	DeliveryType    string `json:"delivery_type" binding:"required"`
-	ScheduledDate   string `json:"scheduled_date" binding:"required"` // DD.MM.YYYY
-	TimeRangeStart  string `json:"time_range_start" binding:"required"`
-	TimeRangeEnd    string `json:"time_range_end" binding:"required"`
-	Notes           string `json:"notes"`
+	CustomerName    string   `json:"customer_name" binding:"required"`
+	CustomerPhone   string   `json:"customer_phone" binding:"required"`
+	RecipientPhone  string   `json:"recipient_phone" binding:"required"`
+	FromRegionID    int64    `json:"from_region_id" binding:"required"`
+	FromDistrictID  int64    `json:"from_district_id" binding:"required"`
+	FromLatitude    *float64 `json:"from_latitude"`
+	FromLongitude   *float64 `json:"from_longitude"`
+	FromAddress     *string  `json:"from_address"`
+	ToRegionID      int64    `json:"to_region_id" binding:"required"`
+	ToDistrictID    int64    `json:"to_district_id" binding:"required"`
+	ToLatitude      *float64 `json:"to_latitude"`
+	ToLongitude     *float64 `json:"to_longitude"`
+	ToAddress       *string  `json:"to_address"`
+	DeliveryType    string   `json:"delivery_type" binding:"required"`
+	ScheduledDate   string   `json:"scheduled_date" binding:"required"` // DD.MM.YYYY
+	TimeRangeStart  string   `json:"time_range_start" binding:"required"`
+	TimeRangeEnd    string   `json:"time_range_end" binding:"required"`
+	Notes           string   `json:"notes"`
 }
 
 // CreateTaxiOrder godoc
@@ -106,14 +118,17 @@ func (h *OrderHandler) CreateTaxiOrder(c *gin.Context) {
 	err = database.DB.QueryRow(`
 		INSERT INTO orders (
 			user_id, order_type, status, customer_name, customer_phone,
-			from_region_id, from_district_id, to_region_id, to_district_id,
+			from_region_id, from_district_id, from_latitude, from_longitude, from_address,
+			to_region_id, to_district_id, to_latitude, to_longitude, to_address,
 			passenger_count, scheduled_date, time_range_start, time_range_end,
 			price, service_fee, discount_percentage, final_price, notes, accept_deadline
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
 		RETURNING id, created_at, updated_at
 	`, userID, models.OrderTypeTaxi, models.OrderStatusPending,
-		req.CustomerName, req.CustomerPhone, req.FromRegionID, req.FromDistrictID,
-		req.ToRegionID, req.ToDistrictID, req.PassengerCount, scheduledDate,
+		req.CustomerName, req.CustomerPhone, 
+		req.FromRegionID, req.FromDistrictID, req.FromLatitude, req.FromLongitude, req.FromAddress,
+		req.ToRegionID, req.ToDistrictID, req.ToLatitude, req.ToLongitude, req.ToAddress,
+		req.PassengerCount, scheduledDate,
 		req.TimeRangeStart, req.TimeRangeEnd, price, serviceFee, discount, finalPriceCalc,
 		notes, acceptDeadline,
 	).Scan(&order.ID, &order.CreatedAt, &order.UpdatedAt)
@@ -131,8 +146,14 @@ func (h *OrderHandler) CreateTaxiOrder(c *gin.Context) {
 	order.CustomerPhone = req.CustomerPhone
 	order.FromRegionID = req.FromRegionID
 	order.FromDistrictID = req.FromDistrictID
+	order.FromLatitude = req.FromLatitude
+	order.FromLongitude = req.FromLongitude
+	order.FromAddress = req.FromAddress
 	order.ToRegionID = req.ToRegionID
 	order.ToDistrictID = req.ToDistrictID
+	order.ToLatitude = req.ToLatitude
+	order.ToLongitude = req.ToLongitude
+	order.ToAddress = req.ToAddress
 	passengerCount := int64(req.PassengerCount)
 	order.PassengerCount = &passengerCount
 	order.ScheduledDate = scheduledDate
@@ -204,14 +225,16 @@ func (h *OrderHandler) CreateDeliveryOrder(c *gin.Context) {
 	err = database.DB.QueryRow(`
 		INSERT INTO orders (
 			user_id, order_type, status, customer_name, customer_phone, recipient_phone,
-			from_region_id, from_district_id, to_region_id, to_district_id,
+			from_region_id, from_district_id, from_latitude, from_longitude, from_address,
+			to_region_id, to_district_id, to_latitude, to_longitude, to_address,
 			delivery_type, scheduled_date, time_range_start, time_range_end,
 			price, service_fee, discount_percentage, final_price, notes, accept_deadline
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
 		RETURNING id, created_at, updated_at
 	`, userID, models.OrderTypeDelivery, models.OrderStatusPending,
 		req.CustomerName, req.CustomerPhone, req.RecipientPhone,
-		req.FromRegionID, req.FromDistrictID, req.ToRegionID, req.ToDistrictID,
+		req.FromRegionID, req.FromDistrictID, req.FromLatitude, req.FromLongitude, req.FromAddress,
+		req.ToRegionID, req.ToDistrictID, req.ToLatitude, req.ToLongitude, req.ToAddress,
 		req.DeliveryType, scheduledDate, req.TimeRangeStart, req.TimeRangeEnd,
 		price, serviceFee, 0, finalPrice,
 		notes, acceptDeadline,
