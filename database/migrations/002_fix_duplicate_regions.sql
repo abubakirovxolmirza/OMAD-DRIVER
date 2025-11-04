@@ -1,13 +1,14 @@
--- Remove duplicate or unwanted regions
--- Replace the IDs below with the actual IDs you want to delete
+-- Remove all duplicate regions and districts
+-- Keep only the original 14 regions (ID 1-14) and 191 districts
 
--- Example: Delete specific regions by ID
--- DELETE FROM regions WHERE id IN (15, 16, 17);
+-- Delete all duplicate regions (created by multiple migrations)
+DELETE FROM regions WHERE id > 14;
 
--- Example: Delete by name
--- DELETE FROM regions WHERE name_uz_lat = 'Duplicate Name';
+-- Reset sequences to correct values
+SELECT setval('regions_id_seq', 14);
+SELECT setval('districts_id_seq', (SELECT MAX(id) FROM districts));
 
--- To find duplicates first, run:
--- SELECT name_uz_lat, COUNT(*) FROM regions GROUP BY name_uz_lat HAVING COUNT(*) > 1;
+-- Verify results
+SELECT COUNT(*) as total_regions FROM regions;
+SELECT COUNT(*) as total_districts FROM districts;
 
--- Add your DELETE statements here:
