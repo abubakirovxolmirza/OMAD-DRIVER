@@ -125,7 +125,14 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 		regions := v1.Group("/regions")
 		{
 			regions.GET("", regionHandler.GetRegions)
+			regions.GET("/:id", regionHandler.GetRegion)
 			regions.GET("/:region_id/districts", regionHandler.GetDistricts)
+		}
+
+		// District routes (public)
+		districts := v1.Group("/districts")
+		{
+			districts.GET("/:id", regionHandler.GetDistrict)
 		}
 
 		// Protected routes (require authentication)
@@ -205,6 +212,14 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 				admin.GET("/orders", adminHandler.GetAllOrders)
 				admin.GET("/statistics", adminHandler.GetStatistics)
 				admin.GET("/feedback", adminHandler.GetFeedback)
+
+				// Region & District management (Admin only)
+				admin.POST("/regions", regionHandler.CreateRegion)
+				admin.PUT("/regions/:id", regionHandler.UpdateRegion)
+				admin.DELETE("/regions/:id", regionHandler.DeleteRegion)
+				admin.POST("/districts", regionHandler.CreateDistrict)
+				admin.PUT("/districts/:id", regionHandler.UpdateDistrict)
+				admin.DELETE("/districts/:id", regionHandler.DeleteDistrict)
 
 				// Superadmin only routes
 				superadmin := admin.Group("")

@@ -252,6 +252,20 @@ func NewRegionHandler() *RegionHandler {
 	return &RegionHandler{}
 }
 
+// CreateRegionRequest represents region creation request
+type CreateRegionRequest struct {
+	NameUzLat string `json:"name_uz_lat" binding:"required"`
+	NameUzCyr string `json:"name_uz_cyr" binding:"required"`
+	NameRu    string `json:"name_ru" binding:"required"`
+}
+
+// UpdateRegionRequest represents region update request
+type UpdateRegionRequest struct {
+	NameUzLat string `json:"name_uz_lat"`
+	NameUzCyr string `json:"name_uz_cyr"`
+	NameRu    string `json:"name_ru"`
+}
+
 // GetRegions godoc
 // @Summary Get all regions
 // @Description Get list of all regions
@@ -278,6 +292,187 @@ func (h *RegionHandler) GetRegions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, regions)
+}
+
+// GetRegion godoc
+// @Summary Get region by ID
+// @Description Get a specific region by ID
+// @Tags Regions
+// @Produce json
+// @Param id path int true "Region ID"
+// @Success 200 {object} models.Region
+// @Router /regions/{id} [get]
+func (h *RegionHandler) GetRegion(c *gin.Context) {
+	regionID := c.Param("id")
+
+	var region models.Region
+	err := database.DB.QueryRow("SELECT * FROM regions WHERE id = $1", regionID).Scan(
+		&region.ID, &region.NameUzLat, &region.NameUzCyr, &region.NameRu, &region.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Region not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, region)
+}
+
+// CreateRegion godoc
+// @Summary Create a new region
+// @Description Create a new region (Admin only)
+// @Tags Regions
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param request body CreateRegionRequest true "Region details"
+// @Success 201 {object} models.Region
+// @Router /regions [post]
+func (h *RegionHandler) CreateRegion(c *gin.Context) {
+	var req CreateRegionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var region models.Region
+	err := database.DB.QueryRow(`
+		INSERT INTO regions (name_uz_lat, name_uz_cyr, name_ru)
+		VALUES ($1, $2, $3)
+		RETURNING id, name_uz_lat, name_uz_cyr, name_ru, created_at
+	`, req.NameUzLat, req.NameUzCyr, req.NameRu).Scan(
+		&region.ID, &region.NameUzLat, &region.NameUzCyr, &region.NameRu, &region.CreatedAt,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create region"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, region)
+}
+
+// UpdateRegion godoc
+// @Summary Update a region
+// @Description Update an existing region (Admin only)
+// @Tags Regions
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path int true "Region ID"
+// @Param request body UpdateRegionRequest true "Region details"
+// @Success 200 {object} models.Region
+// @Router /regions/{id} [put]
+func (h *RegionHandler) UpdateRegion(c *gin.Context) {
+	regionID := c.Param("id")
+
+	var req UpdateRegionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Build dynamic update query
+	query := "UPDATE regions SET "
+	args := []interface{}{}
+	argCount := 1
+
+	if req.NameUzLat != "" {
+		query += "name_uz_lat = $1, "
+		args = append(args, req.NameUzLat)
+		argCount++
+	}
+	if req.NameUzCyr != "" {
+		if argCount == 1 {
+			query += "name_uz_cyr = $1, "
+		} else if argCount == 2 {
+			query += "name_uz_cyr = $2, "
+		} else {
+			query += "name_uz_cyr = $3, "
+		}
+		args = append(args, req.NameUzCyr)
+		argCount++
+	}
+	if req.NameRu != "" {
+		if argCount == 1 {
+			query += "name_ru = $1, "
+		} else if argCount == 2 {
+			query += "name_ru = $2, "
+		} else if argCount == 3 {
+			query += "name_ru = $3, "
+		} else {
+			query += "name_ru = $4, "
+		}
+		args = append(args, req.NameRu)
+		argCount++
+	}
+
+	if len(args) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
+		return
+	}
+
+	// Remove trailing comma and add WHERE clause
+	query = query[:len(query)-2]
+	if argCount == 2 {
+		query += " WHERE id = $2"
+	} else if argCount == 3 {
+		query += " WHERE id = $3"
+	} else if argCount == 4 {
+		query += " WHERE id = $4"
+	} else {
+		query += " WHERE id = $5"
+	}
+	args = append(args, regionID)
+
+	result, err := database.DB.Exec(query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update region"})
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Region not found"})
+		return
+	}
+
+	// Fetch updated region
+	var region models.Region
+	database.DB.QueryRow("SELECT * FROM regions WHERE id = $1", regionID).Scan(
+		&region.ID, &region.NameUzLat, &region.NameUzCyr, &region.NameRu, &region.CreatedAt,
+	)
+
+	c.JSON(http.StatusOK, region)
+}
+
+// DeleteRegion godoc
+// @Summary Delete a region
+// @Description Delete a region (Admin only)
+// @Tags Regions
+// @Security BearerAuth
+// @Produce json
+// @Param id path int true "Region ID"
+// @Success 200 {object} map[string]string
+// @Router /regions/{id} [delete]
+func (h *RegionHandler) DeleteRegion(c *gin.Context) {
+	regionID := c.Param("id")
+
+	result, err := database.DB.Exec("DELETE FROM regions WHERE id = $1", regionID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete region"})
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Region not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Region deleted successfully"})
 }
 
 // GetDistricts godoc
@@ -309,6 +504,202 @@ func (h *RegionHandler) GetDistricts(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, districts)
+}
+
+// CreateDistrictRequest represents district creation request
+type CreateDistrictRequest struct {
+	RegionID  int64  `json:"region_id" binding:"required"`
+	NameUzLat string `json:"name_uz_lat" binding:"required"`
+	NameUzCyr string `json:"name_uz_cyr" binding:"required"`
+	NameRu    string `json:"name_ru" binding:"required"`
+}
+
+// UpdateDistrictRequest represents district update request
+type UpdateDistrictRequest struct {
+	NameUzLat string `json:"name_uz_lat"`
+	NameUzCyr string `json:"name_uz_cyr"`
+	NameRu    string `json:"name_ru"`
+}
+
+// GetDistrict godoc
+// @Summary Get district by ID
+// @Description Get a specific district by ID
+// @Tags Regions
+// @Produce json
+// @Param id path int true "District ID"
+// @Success 200 {object} models.District
+// @Router /districts/{id} [get]
+func (h *RegionHandler) GetDistrict(c *gin.Context) {
+	districtID := c.Param("id")
+
+	var district models.District
+	err := database.DB.QueryRow("SELECT * FROM districts WHERE id = $1", districtID).Scan(
+		&district.ID, &district.RegionID, &district.NameUzLat, &district.NameUzCyr, &district.NameRu, &district.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "District not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, district)
+}
+
+// CreateDistrict godoc
+// @Summary Create a new district
+// @Description Create a new district (Admin only)
+// @Tags Regions
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param request body CreateDistrictRequest true "District details"
+// @Success 201 {object} models.District
+// @Router /districts [post]
+func (h *RegionHandler) CreateDistrict(c *gin.Context) {
+	var req CreateDistrictRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var district models.District
+	err := database.DB.QueryRow(`
+		INSERT INTO districts (region_id, name_uz_lat, name_uz_cyr, name_ru)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, region_id, name_uz_lat, name_uz_cyr, name_ru, created_at
+	`, req.RegionID, req.NameUzLat, req.NameUzCyr, req.NameRu).Scan(
+		&district.ID, &district.RegionID, &district.NameUzLat, &district.NameUzCyr, &district.NameRu, &district.CreatedAt,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create district"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, district)
+}
+
+// UpdateDistrict godoc
+// @Summary Update a district
+// @Description Update an existing district (Admin only)
+// @Tags Regions
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path int true "District ID"
+// @Param request body UpdateDistrictRequest true "District details"
+// @Success 200 {object} models.District
+// @Router /districts/{id} [put]
+func (h *RegionHandler) UpdateDistrict(c *gin.Context) {
+	districtID := c.Param("id")
+
+	var req UpdateDistrictRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Build dynamic update query
+	query := "UPDATE districts SET "
+	args := []interface{}{}
+	argCount := 1
+
+	if req.NameUzLat != "" {
+		query += "name_uz_lat = $1, "
+		args = append(args, req.NameUzLat)
+		argCount++
+	}
+	if req.NameUzCyr != "" {
+		if argCount == 1 {
+			query += "name_uz_cyr = $1, "
+		} else if argCount == 2 {
+			query += "name_uz_cyr = $2, "
+		} else {
+			query += "name_uz_cyr = $3, "
+		}
+		args = append(args, req.NameUzCyr)
+		argCount++
+	}
+	if req.NameRu != "" {
+		if argCount == 1 {
+			query += "name_ru = $1, "
+		} else if argCount == 2 {
+			query += "name_ru = $2, "
+		} else if argCount == 3 {
+			query += "name_ru = $3, "
+		} else {
+			query += "name_ru = $4, "
+		}
+		args = append(args, req.NameRu)
+		argCount++
+	}
+
+	if len(args) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
+		return
+	}
+
+	// Remove trailing comma and add WHERE clause
+	query = query[:len(query)-2]
+	if argCount == 2 {
+		query += " WHERE id = $2"
+	} else if argCount == 3 {
+		query += " WHERE id = $3"
+	} else if argCount == 4 {
+		query += " WHERE id = $4"
+	} else {
+		query += " WHERE id = $5"
+	}
+	args = append(args, districtID)
+
+	result, err := database.DB.Exec(query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update district"})
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "District not found"})
+		return
+	}
+
+	// Fetch updated district
+	var district models.District
+	database.DB.QueryRow("SELECT * FROM districts WHERE id = $1", districtID).Scan(
+		&district.ID, &district.RegionID, &district.NameUzLat, &district.NameUzCyr, &district.NameRu, &district.CreatedAt,
+	)
+
+	c.JSON(http.StatusOK, district)
+}
+
+// DeleteDistrict godoc
+// @Summary Delete a district
+// @Description Delete a district (Admin only)
+// @Tags Regions
+// @Security BearerAuth
+// @Produce json
+// @Param id path int true "District ID"
+// @Success 200 {object} map[string]string
+// @Router /districts/{id} [delete]
+func (h *RegionHandler) DeleteDistrict(c *gin.Context) {
+	districtID := c.Param("id")
+
+	result, err := database.DB.Exec("DELETE FROM districts WHERE id = $1", districtID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete district"})
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "District not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "District deleted successfully"})
 }
 
 // FeedbackHandler handles feedback endpoints
