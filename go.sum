@@ -12,7 +12,7 @@ github.com/go-playground/universal-translator v0.18.1/go.mod h1:xekY+UJKNuX9WP91
 github.com/go-playground/validator/v10 v10.16.0 h1:x+plE831WK4vaKHO0V+Is/zRC4aEL7O56bAjFTQfno=
 github.com/go-playground/validator/v10 v10.16.0/go.mod h1:9iXMNT7sEkjXb0mlCLjogAxvm+Fr/5YGzY8Fy5i1A8=
 github.com/gofiber/fiber/v2 v2.51.0 h1:JNACcZy5Z2zLUpBObsidasKLjDkaWkd8Lij3E03e30=
-github.com/gofiber/fiber/v2 v2.51.0/go.mod h1:xaQRZQJGqnMsjeVcqq+rydEranyYW2d3+8JJTHW22E=
+github.com/gofiber/fiber/v2 v2.51.0/go.mod h1:xaQRZQJGqnKOQnbQw+ltvku3/h8QxvNi8o6JiJ7Ll0U=
 github.com/golang-jwt/jwt/v5 v5.2.0 h1:d/IzQCvvDA1aglo/7L4gDE+5ryXiCJqzLR1j1TgKLs=
 github.com/golang-jwt/jwt/v5 v5.2.0/go.mod h1:pqrtFR0X4osieyHYxtXqJsarF8v3xH42cnu7H5LaKk=
 github.com/google/uuid v1.5.0 h1:1mLB0tR9E6w9wXJe4lDiVJgFb/L2zWMGh2D2I3PwSM=
