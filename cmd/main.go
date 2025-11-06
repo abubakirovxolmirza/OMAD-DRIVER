@@ -5,11 +5,8 @@ import (
 	"os"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/logger"
-	"github.com/gofiber/fiber/v2/middleware/recover"
-	fiberSwagger "github.com/gofiber/swagger"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 
-	docs "taxi-service/docs"
 	"taxi-service/internal/config"
 	"taxi-service/internal/database"
 	"taxi-service/internal/handlers"
@@ -30,13 +27,12 @@ import (
 
 // @host api.omad-driver.uz
 // @BasePath /api/v1
-// @schemes http https
+// @schemes https http
 
 // @securityDefinitions.apikey BearerAuth
 // @in header
 // @name Authorization
 // @description Type "Bearer" followed by a space and JWT token.
-
 
 func main() {
 	// Load configuration
@@ -71,42 +67,43 @@ func main() {
 		log.Fatalf("Failed to create upload directory: %v", err)
 	}
 
-	// Setup application
-	app := setupApp(cfg)
+	// Setup router
+	app := setupRouter(cfg)
 
 	// Start server
 	addr := cfg.Server.Host + ":" + cfg.Server.Port
-	log.Printf("Starting server on %s", addr)
+	log.Printf("Starting Fiber server on %s", addr)
 	if err := app.Listen(addr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
 
-func setupApp(cfg *config.Config) *fiber.App {
-	app := fiber.New(fiber.Config{})
+func setupRouter(cfg *config.Config) *fiber.App {
+	// Create Fiber app
+	app := fiber.New(fiber.Config{
+		AppName:      "Taxi Service API v1.0",
+		ErrorHandler: errorHandler,
+	})
 
-	docs.SwaggerInfo.Host = cfg.Server.Domain
-	docs.SwaggerInfo.BasePath = "/api/v1"
-	docs.SwaggerInfo.Schemes = []string{"https", "http"}
-
-	// Core middleware
-	app.Use(recover.New())
-	app.Use(logger.New())
-	app.Use(middleware.CORSMiddleware(cfg.CORS.AllowedOrigins))
+	// CORS middleware
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:     cfg.CORS.AllowedOrigins,
+		AllowMethods:     "GET,POST,PUT,DELETE,PATCH,OPTIONS",
+		AllowHeaders:     "Content-Type, Authorization, Accept, Origin, Cache-Control, X-Requested-With",
+		AllowCredentials: true,
+		ExposeHeaders:    "Content-Length, X-JSON-Response",
+	}))
 
 	// Serve static files (uploads)
 	app.Static("/uploads", cfg.Upload.Directory)
 
-	// Swagger documentation
-	app.Get("/swagger/*", fiberSwagger.WrapHandler)
-
 	// Health check
 	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "ok"})
+		return c.JSON(fiber.H{"status": "ok"})
 	})
 
 	// API v1 routes
-	v1 := app.Group("/api").Group("/v1")
+	api := app.Group("/api/v1")
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(cfg)
@@ -119,89 +116,133 @@ func setupApp(cfg *config.Config) *fiber.App {
 	feedbackHandler := handlers.NewFeedbackHandler()
 
 	// Public routes
-	auth := v1.Group("/auth")
-	auth.Post("/register", authHandler.Register)
-	auth.Post("/login", authHandler.Login)
+	auth := api.Group("/auth")
+	{
+		auth.Post("/register", authHandler.RegisterFiber)
+		auth.Post("/login", authHandler.LoginFiber)
+	}
 
-	// Region & district routes (public)
-	v1.Get("/regions", regionHandler.GetRegions)
-	v1.Get("/regions/:id", regionHandler.GetRegion)
-	v1.Get("/regions/:id/districts", regionHandler.GetDistricts)
-	v1.Get("/districts/:id", regionHandler.GetDistrict)
+	// Region routes (public)
+	regions := api.Group("/regions")
+	{
+		regions.Get("", regionHandler.GetRegionsFiber)
+		regions.Get("/:id", regionHandler.GetRegionFiber)
+		regions.Get("/:id/districts", regionHandler.GetDistrictsFiber)
+	}
+
+	// District routes (public)
+	districts := api.Group("/districts")
+	{
+		districts.Get("/:id", regionHandler.GetDistrictFiber)
+	}
 
 	// Protected routes (require authentication)
-	protected := v1.Group("")
-	protected.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
+	protected := api.Group("")
+	protected.Use(middleware.AuthMiddlewareFiber(cfg.JWT.Secret))
 
 	// Auth/Profile routes
 	profile := protected.Group("/auth")
-	profile.Get("/profile", authHandler.GetProfile)
-	profile.Put("/profile", authHandler.UpdateProfile)
-	profile.Post("/change-password", authHandler.ChangePassword)
-	profile.Post("/avatar", authHandler.UploadAvatar)
+	{
+		profile.Get("/profile", authHandler.GetProfileFiber)
+		profile.Put("/profile", authHandler.UpdateProfileFiber)
+		profile.Post("/change-password", authHandler.ChangePasswordFiber)
+		profile.Post("/avatar", authHandler.UploadAvatarFiber)
+	}
 
 	// Order routes (users)
 	orders := protected.Group("/orders")
-	orders.Post("/taxi", orderHandler.CreateTaxiOrder)
-	orders.Post("/delivery", orderHandler.CreateDeliveryOrder)
-	orders.Get("/my", orderHandler.GetMyOrders)
-	orders.Get("/:id", orderHandler.GetOrderByID)
-	orders.Post("/:id/cancel", orderHandler.CancelOrder)
+	{
+		orders.Post("/taxi", orderHandler.CreateTaxiOrderFiber)
+		orders.Post("/delivery", orderHandler.CreateDeliveryOrderFiber)
+		orders.Get("/my", orderHandler.GetMyOrdersFiber)
+		orders.Get("/:id", orderHandler.GetOrderByIDFiber)
+		orders.Post("/:id/cancel", orderHandler.CancelOrderFiber)
+	}
 
 	// Rating routes
-	protected.Post("/ratings", ratingHandler.CreateRating)
-	protected.Get("/ratings/driver/:driver_id", ratingHandler.GetDriverRatings)
+	ratings := protected.Group("/ratings")
+	{
+		ratings.Post("", ratingHandler.CreateRatingFiber)
+		ratings.Get("/driver/:driver_id", ratingHandler.GetDriverRatingsFiber)
+	}
 
 	// Notification routes
-	protected.Get("/notifications", notificationHandler.GetMyNotifications)
-	protected.Post("/notifications/:id/read", notificationHandler.MarkNotificationRead)
+	notifications := protected.Group("/notifications")
+	{
+		notifications.Get("", notificationHandler.GetMyNotificationsFiber)
+		notifications.Post("/:id/read", notificationHandler.MarkNotificationReadFiber)
+	}
 
 	// Feedback routes
-	protected.Post("/feedback", feedbackHandler.SubmitFeedback)
+	feedback := protected.Group("/feedback")
+	{
+		feedback.Post("", feedbackHandler.SubmitFeedbackFiber)
+	}
 
 	// Driver routes
 	driver := protected.Group("/driver")
-	driver.Post("/apply", driverHandler.ApplyAsDriver)
+	{
+		driver.Post("/apply", driverHandler.ApplyAsDriverFiber)
 
-	driverOnly := driver.Group("")
-	driverOnly.Use(middleware.RoleMiddleware(models.RoleDriver, models.RoleAdmin, models.RoleSuperAdmin))
-	driverOnly.Get("/profile", driverHandler.GetDriverProfile)
-	driverOnly.Put("/profile", driverHandler.UpdateDriverProfile)
-	driverOnly.Get("/orders/new", driverHandler.GetNewOrders)
-	driverOnly.Post("/orders/:id/accept", driverHandler.AcceptOrder)
-	driverOnly.Post("/orders/:id/complete", driverHandler.CompleteOrder)
-	driverOnly.Get("/orders", driverHandler.GetDriverOrders)
-	driverOnly.Get("/statistics", driverHandler.GetDriverStatistics)
+		driverOnly := driver.Group("")
+		driverOnly.Use(middleware.RoleMiddlewareFiber(models.RoleDriver, models.RoleAdmin, models.RoleSuperAdmin))
+		{
+			driverOnly.Get("/profile", driverHandler.GetDriverProfileFiber)
+			driverOnly.Put("/profile", driverHandler.UpdateDriverProfileFiber)
+			driverOnly.Get("/orders/new", driverHandler.GetNewOrdersFiber)
+			driverOnly.Post("/orders/:id/accept", driverHandler.AcceptOrderFiber)
+			driverOnly.Post("/orders/:id/complete", driverHandler.CompleteOrderFiber)
+			driverOnly.Get("/orders", driverHandler.GetDriverOrdersFiber)
+			driverOnly.Get("/statistics", driverHandler.GetDriverStatisticsFiber)
+		}
+	}
 
 	// Admin routes
 	admin := protected.Group("/admin")
-	admin.Use(middleware.RoleMiddleware(models.RoleAdmin, models.RoleSuperAdmin))
-	admin.Get("/driver-applications", adminHandler.GetDriverApplications)
-	admin.Post("/driver-applications/:id/review", adminHandler.ReviewDriverApplication)
-	admin.Get("/drivers", adminHandler.GetDrivers)
-	admin.Post("/drivers/:id/add-balance", adminHandler.AddDriverBalance)
-	admin.Post("/users/:id/block", adminHandler.BlockUnblockUser)
-	admin.Post("/pricing", adminHandler.SetPricing)
-	admin.Get("/pricing", adminHandler.GetAllPricing)
-	admin.Get("/orders", adminHandler.GetAllOrders)
-	admin.Get("/statistics", adminHandler.GetStatistics)
-	admin.Get("/feedback", adminHandler.GetFeedback)
+	admin.Use(middleware.RoleMiddlewareFiber(models.RoleAdmin, models.RoleSuperAdmin))
+	{
+		admin.Get("/driver-applications", adminHandler.GetDriverApplicationsFiber)
+		admin.Post("/driver-applications/:id/review", adminHandler.ReviewDriverApplicationFiber)
+		admin.Get("/drivers", adminHandler.GetDriversFiber)
+		admin.Post("/drivers/:id/add-balance", adminHandler.AddDriverBalanceFiber)
+		admin.Post("/users/:id/block", adminHandler.BlockUnblockUserFiber)
+		admin.Post("/pricing", adminHandler.SetPricingFiber)
+		admin.Get("/pricing", adminHandler.GetAllPricingFiber)
+		admin.Get("/orders", adminHandler.GetAllOrdersFiber)
+		admin.Get("/statistics", adminHandler.GetStatisticsFiber)
+		admin.Get("/feedback", adminHandler.GetFeedbackFiber)
 
-	// Region & District management
-	admin.Post("/regions", regionHandler.CreateRegion)
-	admin.Put("/regions/:id", regionHandler.UpdateRegion)
-	admin.Delete("/regions/:id", regionHandler.DeleteRegion)
-	admin.Post("/districts", regionHandler.CreateDistrict)
-	admin.Put("/districts/:id", regionHandler.UpdateDistrict)
-	admin.Delete("/districts/:id", regionHandler.DeleteDistrict)
+		admin.Post("/regions", regionHandler.CreateRegionFiber)
+		admin.Put("/regions/:id", regionHandler.UpdateRegionFiber)
+		admin.Delete("/regions/:id", regionHandler.DeleteRegionFiber)
+		admin.Post("/districts", regionHandler.CreateDistrictFiber)
+		admin.Put("/districts/:id", regionHandler.UpdateDistrictFiber)
+		admin.Delete("/districts/:id", regionHandler.DeleteDistrictFiber)
 
-	// Superadmin routes
-	superadmin := admin.Group("")
-	superadmin.Use(middleware.RoleMiddleware(models.RoleSuperAdmin))
-	superadmin.Post("/create-admin", adminHandler.CreateAdmin)
-	superadmin.Post("/users/:id/reset-password", adminHandler.ResetUserPassword)
+		superadmin := admin.Group("")
+		superadmin.Use(middleware.RoleMiddlewareFiber(models.RoleSuperAdmin))
+		{
+			superadmin.Post("/create-admin", adminHandler.CreateAdminFiber)
+			superadmin.Post("/users/:id/reset-password", adminHandler.ResetUserPasswordFiber)
+		}
+	}
 
 	return app
+}
+
+// Error handler for Fiber
+func errorHandler(c *fiber.Ctx, err error) error {
+	code := fiber.StatusInternalServerError
+	message := err.Error()
+
+	if fe, ok := err.(*fiber.Error); ok {
+		code = fe.Code
+		message = fe.Message
+	}
+
+	return c.Status(code).JSON(fiber.H{
+		"error": message,
+	})
 }
 
 func createDefaultSuperAdmin() {
@@ -215,12 +256,12 @@ func createDefaultSuperAdmin() {
 	// Create default superadmin
 	// Password: admin123
 	hashedPassword := "$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi" // bcrypt hash of "admin123"
-	
+
 	_, err := database.DB.Exec(`
 		INSERT INTO users (phone_number, name, password, role)
 		VALUES ($1, $2, $3, $4)
 	`, "+998901234567", "Super Admin", hashedPassword, models.RoleSuperAdmin)
-	
+
 	if err != nil {
 		log.Printf("Warning: Failed to create default superadmin: %v", err)
 	} else {

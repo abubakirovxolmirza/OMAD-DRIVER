@@ -15,8 +15,49 @@ import (
 // AllowedImageExtensions defines allowed image file extensions
 var AllowedImageExtensions = []string{".jpg", ".jpeg", ".png", ".gif"}
 
-// SaveUploadedFile saves an uploaded file to the specified directory
+// SaveUploadedFile saves an uploaded file to the specified directory (Gin)
 func SaveUploadedFile(file *multipart.FileHeader, uploadDir, subDir string) (string, error) {
+	// Create upload directory if it doesn't exist
+	fullDir := filepath.Join(uploadDir, subDir)
+	if err := os.MkdirAll(fullDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create upload directory: %w", err)
+	}
+
+	// Validate file extension
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if !isAllowedExtension(ext) {
+		return "", fmt.Errorf("file type not allowed: %s", ext)
+	}
+
+	// Generate unique filename
+	filename := fmt.Sprintf("%s_%d%s", uuid.New().String(), time.Now().Unix(), ext)
+	filePath := filepath.Join(fullDir, filename)
+
+	// Open uploaded file
+	src, err := file.Open()
+	if err != nil {
+		return "", fmt.Errorf("failed to open uploaded file: %w", err)
+	}
+	defer src.Close()
+
+	// Create destination file
+	dst, err := os.Create(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer dst.Close()
+
+	// Copy file content
+	if _, err := io.Copy(dst, src); err != nil {
+		return "", fmt.Errorf("failed to save file: %w", err)
+	}
+
+	// Return relative path
+	return filepath.Join(subDir, filename), nil
+}
+
+// SaveUploadedFileFiber saves an uploaded file to the specified directory (Fiber)
+func SaveUploadedFileFiber(file *multipart.FileHeader, uploadDir, subDir string) (string, error) {
 	// Create upload directory if it doesn't exist
 	fullDir := filepath.Join(uploadDir, subDir)
 	if err := os.MkdirAll(fullDir, 0755); err != nil {
@@ -79,3 +120,4 @@ func isAllowedExtension(ext string) bool {
 	}
 	return false
 }
+

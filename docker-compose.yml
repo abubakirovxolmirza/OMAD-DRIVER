@@ -2,55 +2,95 @@ version: '3.8'
 
 services:
   db:
-    image: postgres:14-alpine
+    image: postgres:15-alpine
     container_name: taxi_postgres
-    restart: always
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: taxi_service
-      POSTGRES_USER: taxi_user
-      POSTGRES_PASSWORD: taxi_password
+      POSTGRES_DB: ${DB_NAME:-taxi_service}
+      POSTGRES_USER: ${DB_USER:-taxi_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me_in_production}
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U taxi_user -d taxi_service"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-taxi_user} -d ${DB_NAME:-taxi_service}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - taxi_network
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"
+      - "-c"
+      - "max_connections=200"
 
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: taxi_backend
-    restart: always
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      - "${SERVER_PORT:-8080}:${SERVER_PORT:-8080}"
     environment:
-      SERVER_PORT: 8080
+      SERVER_PORT: ${SERVER_PORT:-8080}
       SERVER_HOST: 0.0.0.0
-      ENV: production
+      ENV: ${ENV:-production}
       DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: taxi_user
-      DB_PASSWORD: taxi_password
-      DB_NAME: taxi_service
-      DB_SSLMODE: disable
-      JWT_SECRET: your_jwt_secret_here
-      JWT_EXPIRATION_HOURS: 720
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-taxi_user}
+      DB_PASSWORD: ${DB_PASSWORD:-change_me_in_production}
+      DB_NAME: ${DB_NAME:-taxi_service}
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      JWT_SECRET: ${JWT_SECRET:-change_this_secret_key_in_production}
+      JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-720}
       UPLOAD_DIR: /app/uploads
-      MAX_UPLOAD_SIZE: 10485760
-      CORS_ALLOWED_ORIGINS: "*"
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-10485760}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://api.omad-driver.uz,https://omad-driver.uz}
+      DISCOUNT_1_PERSON: ${DISCOUNT_1_PERSON:-0}
+      DISCOUNT_2_PERSON: ${DISCOUNT_2_PERSON:-10}
+      DISCOUNT_3_PERSON: ${DISCOUNT_3_PERSON:-15}
+      DISCOUNT_FULL_CAR: ${DISCOUNT_FULL_CAR:-20}
+      SERVICE_FEE_PERCENTAGE: ${SERVICE_FEE_PERCENTAGE:-15}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ADMIN_GROUP_ID: ${TELEGRAM_ADMIN_GROUP_ID:-}
     volumes:
       - ./uploads:/app/uploads
+      - ./logs:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${SERVER_PORT:-8080}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+    networks:
+      - taxi_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   postgres_data:
+    driver: local
+
+networks:
+  taxi_network:
+    driver: bridge

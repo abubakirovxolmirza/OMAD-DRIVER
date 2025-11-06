@@ -3,8 +3,9 @@ package handlers
 import (
 	"database/sql"
 	"fmt"
+	"net/http"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gin-gonic/gin"
 	"taxi-service/internal/config"
 	"taxi-service/internal/database"
 	"taxi-service/internal/middleware"
@@ -24,7 +25,7 @@ func NewAdminHandler(cfg *config.Config) *AdminHandler {
 
 // ReviewDriverApplicationRequest represents application review
 type ReviewDriverApplicationRequest struct {
-	Status          string `json:"status" validate:"required,oneof=approved rejected"`
+	Status         string `json:"status" binding:"required,oneof=approved rejected"`
 	RejectionReason string `json:"rejection_reason"`
 }
 
@@ -39,14 +40,14 @@ type ReviewDriverApplicationRequest struct {
 // @Param request body ReviewDriverApplicationRequest true "Review details"
 // @Success 200 {object} map[string]string
 // @Router /admin/driver-applications/{id}/review [post]
-
-func (h *AdminHandler) ReviewDriverApplication(c *fiber.Ctx) error {
+func (h *AdminHandler) ReviewDriverApplication(c *gin.Context) {
 	adminID, _ := middleware.GetUserID(c)
 	applicationID := c.Param("id")
 
 	var req ReviewDriverApplicationRequest
-	if err := parseAndValidateJSON(c, &req); err != nil {
-		return err
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Get application
@@ -59,16 +60,19 @@ func (h *AdminHandler) ReviewDriverApplication(c *fiber.Ctx) error {
 		&application.CarModel, &application.CarNumber, &application.LicenseImage,
 	)
 	if err == sql.ErrNoRows {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Application not found or already reviewed"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Application not found or already reviewed"})
+		return
 	}
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
 	}
 
 	// Begin transaction
 	tx, err := database.DB.Begin()
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
 	}
 	defer tx.Rollback()
 
@@ -85,44 +89,33 @@ func (h *AdminHandler) ReviewDriverApplication(c *fiber.Ctx) error {
     	WHERE id = $4
 	`, req.Status, rejectionReason, adminID, applicationID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update application"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update application"})
+		return
 	}
 
 	if req.Status == "approved" {
-		// Update user role to driver (preserve admin/superadmin)
-		_, err = tx.Exec(`
-			UPDATE users SET role = CASE 
-				WHEN role IN ($1, $2) THEN role
-				ELSE $3
-			END,
-			updated_at = CURRENT_TIMESTAMP
-			WHERE id = $4
-		`, models.RoleAdmin, models.RoleSuperAdmin, models.RoleDriver, application.UserID)
+		// Update user role to driver
+		_, err = tx.Exec(`UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, models.RoleDriver, application.UserID)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update user role"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user role"})
+			return
 		}
 
-		// Create or update driver record
+		// Create driver record
 		_, err = tx.Exec(`
-			INSERT INTO drivers (user_id, full_name, car_model, car_number, license_image, status, balance, is_active)
-			VALUES ($1, $2, $3, $4, $5, 'approved', 0, true)
-			ON CONFLICT (user_id) DO UPDATE
-			SET full_name = EXCLUDED.full_name,
-				car_model = EXCLUDED.car_model,
-				car_number = EXCLUDED.car_number,
-				license_image = EXCLUDED.license_image,
-				status = 'approved',
-				is_active = true,
-				updated_at = CURRENT_TIMESTAMP
-		`, application.UserID, application.FullName, application.CarModel, application.CarNumber, application.LicenseImage)
+			INSERT INTO drivers (user_id, full_name, car_model, car_number, license_image, status, balance)
+			VALUES ($1, $2, $3, $4, $5, $6, 0)
+		`, application.UserID, application.FullName, application.CarModel, application.CarNumber, application.LicenseImage, "approved")
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to upsert driver profile"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create driver profile"})
+			return
 		}
 	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to commit transaction"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
 	}
 
 	// Create notification for user
@@ -138,7 +131,7 @@ func (h *AdminHandler) ReviewDriverApplication(c *fiber.Ctx) error {
 		VALUES ($1, $2, $3, $4)
 	`, application.UserID, "Driver Application Status", notifMessage, "application_review")
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Application reviewed successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Application reviewed successfully"})
 }
 
 // GetDriverApplications godoc
@@ -150,8 +143,7 @@ func (h *AdminHandler) ReviewDriverApplication(c *fiber.Ctx) error {
 // @Param status query string false "Filter by status"
 // @Success 200 {array} models.DriverApplication
 // @Router /admin/driver-applications [get]
-
-func (h *AdminHandler) GetDriverApplications(c *fiber.Ctx) error {
+func (h *AdminHandler) GetDriverApplications(c *gin.Context) {
 	status := c.Query("status")
 
 	query := "SELECT * FROM driver_applications"
@@ -164,10 +156,11 @@ func (h *AdminHandler) GetDriverApplications(c *fiber.Ctx) error {
 
 	query += " ORDER BY created_at DESC"
 
-rows, err := database.DB.Query(query, args...)
-if err != nil {
-	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch applications"})
-}
+	rows, err := database.DB.Query(query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch applications"})
+		return
+	}
 	defer rows.Close()
 
 	applications := []models.DriverApplication{}
@@ -184,7 +177,7 @@ if err != nil {
 		applications = append(applications, app)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(applications)
+	c.JSON(http.StatusOK, applications)
 }
 
 // BlockUserRequest represents block/unblock request
@@ -203,20 +196,21 @@ type BlockUserRequest struct {
 // @Param request body BlockUserRequest true "Block status"
 // @Success 200 {object} map[string]string
 // @Router /admin/users/{id}/block [post]
-
-func (h *AdminHandler) BlockUnblockUser(c *fiber.Ctx) error {
+func (h *AdminHandler) BlockUnblockUser(c *gin.Context) {
 	userID := c.Param("id")
 
 	var req BlockUserRequest
-	if err := parseAndValidateJSON(c, &req); err != nil {
-		return err
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	_, err := database.DB.Exec(`
 		UPDATE users SET is_blocked = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2
 	`, req.IsBlocked, userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update user"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user"})
+		return
 	}
 
 	action := "unblocked"
@@ -224,7 +218,7 @@ func (h *AdminHandler) BlockUnblockUser(c *fiber.Ctx) error {
 		action = "blocked"
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": fmt.Sprintf("User %s successfully", action)})
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("User %s successfully", action)})
 }
 
 // GetDrivers godoc
@@ -236,8 +230,7 @@ func (h *AdminHandler) BlockUnblockUser(c *fiber.Ctx) error {
 // @Param status query string false "Filter by status"
 // @Success 200 {array} models.Driver
 // @Router /admin/drivers [get]
-
-func (h *AdminHandler) GetDrivers(c *fiber.Ctx) error {
+func (h *AdminHandler) GetDrivers(c *gin.Context) {
 	status := c.Query("status")
 
 	query := "SELECT * FROM drivers"
@@ -252,7 +245,8 @@ func (h *AdminHandler) GetDrivers(c *fiber.Ctx) error {
 
 	rows, err := database.DB.Query(query, args...)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch drivers"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch drivers"})
+		return
 	}
 	defer rows.Close()
 
@@ -270,12 +264,12 @@ func (h *AdminHandler) GetDrivers(c *fiber.Ctx) error {
 		drivers = append(drivers, driver)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(drivers)
+	c.JSON(http.StatusOK, drivers)
 }
 
 // AddBalanceRequest represents balance addition request
 type AddBalanceRequest struct {
-	Amount float64 `json:"amount" validate:"required,gt=0"`
+	Amount float64 `json:"amount" binding:"required,gt=0"`
 }
 
 // AddDriverBalance godoc
@@ -289,31 +283,29 @@ type AddBalanceRequest struct {
 // @Param request body AddBalanceRequest true "Amount to add"
 // @Success 200 {object} map[string]string
 // @Router /admin/drivers/{id}/add-balance [post]
-
-func (h *AdminHandler) AddDriverBalance(c *fiber.Ctx) error {
+func (h *AdminHandler) AddDriverBalance(c *gin.Context) {
 	adminID, _ := middleware.GetUserID(c)
 	driverID := c.Param("id")
 
 	var req AddBalanceRequest
-	if err := parseAndValidateJSON(c, &req); err != nil {
-		return err
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Begin transaction
 	tx, err := database.DB.Begin()
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
 	}
 	defer tx.Rollback()
 
 	// Update driver balance
-	result, err := tx.Exec(`UPDATE drivers SET balance = balance + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, req.Amount, driverID)
+	_, err = tx.Exec(`UPDATE drivers SET balance = balance + $1 WHERE id = $2`, req.Amount, driverID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update balance"})
-	}
-	rowsChanged, _ := result.RowsAffected()
-	if rowsChanged == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Driver not found"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update balance"})
+		return
 	}
 
 	// Create transaction record
@@ -322,23 +314,25 @@ func (h *AdminHandler) AddDriverBalance(c *fiber.Ctx) error {
 		VALUES ($1, $2, $3, $4, $5)
 	`, driverID, req.Amount, "credit", "Balance added by admin", adminID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create transaction"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create transaction"})
+		return
 	}
 
 	if err := tx.Commit(); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to commit transaction"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Balance added successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Balance added successfully"})
 }
 
 // SetPricingRequest represents pricing configuration
 type SetPricingRequest struct {
-	FromRegionID   int64   `json:"from_region_id" validate:"required"`
-	ToRegionID     int64   `json:"to_region_id" validate:"required"`
-	BasePrice      float64 `json:"base_price" validate:"required,gt=0"`
-	PricePerPerson float64 `json:"price_per_person" validate:"required,gte=0"`
-	ServiceFee     float64 `json:"service_fee" validate:"required,gte=0,lte=100"`
+	FromRegionID   int64   `json:"from_region_id" binding:"required"`
+	ToRegionID     int64   `json:"to_region_id" binding:"required"`
+	BasePrice      float64 `json:"base_price" binding:"required,gt=0"`
+	PricePerPerson float64 `json:"price_per_person" binding:"required,gte=0"`
+	ServiceFee     float64 `json:"service_fee" binding:"required,gte=0,lte=100"`
 }
 
 // SetPricing godoc
@@ -351,14 +345,11 @@ type SetPricingRequest struct {
 // @Param request body SetPricingRequest true "Pricing details"
 // @Success 200 {object} models.Pricing
 // @Router /admin/pricing [post]
-func (h *AdminHandler) SetPricing(c *fiber.Ctx) error {
+func (h *AdminHandler) SetPricing(c *gin.Context) {
 	var req SetPricingRequest
-	if err := parseAndValidateJSON(c, &req); err != nil {
-		return err
-	}
-
-	if req.FromRegionID == req.ToRegionID {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "From and To regions must differ"})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	var pricing models.Pricing
@@ -373,10 +364,11 @@ func (h *AdminHandler) SetPricing(c *fiber.Ctx) error {
 		&pricing.PricePerPerson, &pricing.ServiceFee, &pricing.CreatedAt, &pricing.UpdatedAt,
 	)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to set pricing"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to set pricing"})
+		return
 	}
 
-	return c.Status(fiber.StatusOK).JSON(pricing)
+	c.JSON(http.StatusOK, pricing)
 }
 
 // GetAllPricing godoc
@@ -387,11 +379,11 @@ func (h *AdminHandler) SetPricing(c *fiber.Ctx) error {
 // @Produce json
 // @Success 200 {array} models.Pricing
 // @Router /admin/pricing [get]
-
-func (h *AdminHandler) GetAllPricing(c *fiber.Ctx) error {
+func (h *AdminHandler) GetAllPricing(c *gin.Context) {
 	rows, err := database.DB.Query("SELECT * FROM pricing ORDER BY created_at DESC")
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch pricing"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pricing"})
+		return
 	}
 	defer rows.Close()
 
@@ -408,7 +400,7 @@ func (h *AdminHandler) GetAllPricing(c *fiber.Ctx) error {
 		pricings = append(pricings, pricing)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(pricings)
+	c.JSON(http.StatusOK, pricings)
 }
 
 // GetAllOrders godoc
@@ -423,8 +415,7 @@ func (h *AdminHandler) GetAllPricing(c *fiber.Ctx) error {
 // @Param to_date query string false "To date (YYYY-MM-DD)"
 // @Success 200 {array} models.Order
 // @Router /admin/orders [get]
-
-func (h *AdminHandler) GetAllOrders(c *fiber.Ctx) error {
+func (h *AdminHandler) GetAllOrders(c *gin.Context) {
 	status := c.Query("status")
 	orderType := c.Query("type")
 	fromDate := c.Query("from_date")
@@ -459,7 +450,8 @@ func (h *AdminHandler) GetAllOrders(c *fiber.Ctx) error {
 
 	rows, err := database.DB.Query(query, args...)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch orders"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch orders"})
+		return
 	}
 	defer rows.Close()
 
@@ -482,7 +474,7 @@ func (h *AdminHandler) GetAllOrders(c *fiber.Ctx) error {
 		orders = append(orders, order)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(orders)
+	c.JSON(http.StatusOK, orders)
 }
 
 // AdminStatistics represents admin statistics
@@ -505,8 +497,7 @@ type AdminStatistics struct {
 // @Produce json
 // @Success 200 {object} AdminStatistics
 // @Router /admin/statistics [get]
-
-func (h *AdminHandler) GetStatistics(c *fiber.Ctx) error {
+func (h *AdminHandler) GetStatistics(c *gin.Context) {
 	var stats AdminStatistics
 
 	// Total users
@@ -525,12 +516,12 @@ func (h *AdminHandler) GetStatistics(c *fiber.Ctx) error {
 	database.DB.QueryRow("SELECT COUNT(*) FROM orders WHERE DATE(created_at) = CURRENT_DATE").Scan(&stats.TodayOrders)
 	database.DB.QueryRow("SELECT COALESCE(SUM(service_fee), 0) FROM orders WHERE DATE(created_at) = CURRENT_DATE AND status = $1", models.OrderStatusCompleted).Scan(&stats.TodayRevenue)
 
-	return c.Status(fiber.StatusOK).JSON(stats)
+	c.JSON(http.StatusOK, stats)
 }
 
 // ResetPasswordRequest represents password reset by admin
 type ResetPasswordRequest struct {
-	NewPassword string `json:"new_password" validate:"required,min=6"`
+	NewPassword string `json:"new_password" binding:"required,min=6"`
 }
 
 // ResetUserPassword godoc
@@ -544,36 +535,38 @@ type ResetPasswordRequest struct {
 // @Param request body ResetPasswordRequest true "New password"
 // @Success 200 {object} map[string]string
 // @Router /admin/users/{id}/reset-password [post]
-
-func (h *AdminHandler) ResetUserPassword(c *fiber.Ctx) error {
+func (h *AdminHandler) ResetUserPassword(c *gin.Context) {
 	userID := c.Param("id")
 
 	var req ResetPasswordRequest
-	if err := parseAndValidateJSON(c, &req); err != nil {
-		return err
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Hash password
 	hashedPassword, err := utils.HashPassword(req.NewPassword)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process password"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process password"})
+		return
 	}
 
 	_, err = database.DB.Exec(`
 		UPDATE users SET password = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2
 	`, hashedPassword, userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to reset password"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset password"})
+		return
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Password reset successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
 }
 
 // CreateAdminRequest represents admin creation
 type CreateAdminRequest struct {
-	PhoneNumber string `json:"phone_number" validate:"required"`
-	Name        string `json:"name" validate:"required"`
-	Password    string `json:"password" validate:"required,min=6"`
+	PhoneNumber string `json:"phone_number" binding:"required"`
+	Name        string `json:"name" binding:"required"`
+	Password    string `json:"password" binding:"required,min=6"`
 }
 
 // CreateAdmin godoc
@@ -586,26 +579,26 @@ type CreateAdminRequest struct {
 // @Param request body CreateAdminRequest true "Admin details"
 // @Success 201 {object} models.User
 // @Router /admin/create-admin [post]
-
-func (h *AdminHandler) CreateAdmin(c *fiber.Ctx) error {
+func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 	var req CreateAdminRequest
-	if err := parseAndValidateJSON(c, &req); err != nil {
-		return err
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Check if phone already exists
 	var existingID int64
-	if err := database.DB.QueryRow("SELECT id FROM users WHERE phone_number = $1", req.PhoneNumber).Scan(&existingID); err != nil && err != sql.ErrNoRows {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
-	}
+	database.DB.QueryRow("SELECT id FROM users WHERE phone_number = $1", req.PhoneNumber).Scan(&existingID)
 	if existingID > 0 {
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Phone number already registered"})
+		c.JSON(http.StatusConflict, gin.H{"error": "Phone number already registered"})
+		return
 	}
 
 	// Hash password
 	hashedPassword, err := utils.HashPassword(req.Password)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process password"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process password"})
+		return
 	}
 
 	// Create admin user
@@ -619,10 +612,11 @@ func (h *AdminHandler) CreateAdmin(c *fiber.Ctx) error {
 		&user.Language, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create admin"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create admin"})
+		return
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(user)
+	c.JSON(http.StatusCreated, user)
 }
 
 // GetFeedback godoc
@@ -633,11 +627,11 @@ func (h *AdminHandler) CreateAdmin(c *fiber.Ctx) error {
 // @Produce json
 // @Success 200 {array} models.Feedback
 // @Router /admin/feedback [get]
-
-func (h *AdminHandler) GetFeedback(c *fiber.Ctx) error {
+func (h *AdminHandler) GetFeedback(c *gin.Context) {
 	rows, err := database.DB.Query("SELECT * FROM feedback ORDER BY created_at DESC")
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch feedback"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch feedback"})
+		return
 	}
 	defer rows.Close()
 
@@ -651,5 +645,5 @@ func (h *AdminHandler) GetFeedback(c *fiber.Ctx) error {
 		feedbacks = append(feedbacks, feedback)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(feedbacks)
+	c.JSON(http.StatusOK, feedbacks)
 }

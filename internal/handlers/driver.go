@@ -3,9 +3,10 @@ package handlers
 import (
 	"database/sql"
 	"fmt"
+	"net/http"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gin-gonic/gin"
 	"taxi-service/internal/config"
 	"taxi-service/internal/database"
 	"taxi-service/internal/middleware"
@@ -25,9 +26,9 @@ func NewDriverHandler(cfg *config.Config) *DriverHandler {
 
 // ApplyAsDriverRequest represents driver application request
 type ApplyAsDriverRequest struct {
-	FullName  string `json:"full_name" validate:"required"`
-	CarModel  string `json:"car_model" validate:"required"`
-	CarNumber string `json:"car_number" validate:"required"`
+	FullName   string `json:"full_name" binding:"required"`
+	CarModel   string `json:"car_model" binding:"required"`
+	CarNumber  string `json:"car_number" binding:"required"`
 }
 
 // ApplyAsDriver godoc
@@ -43,15 +44,15 @@ type ApplyAsDriverRequest struct {
 // @Param license_image formData file true "License Image"
 // @Success 201 {object} models.DriverApplication
 // @Router /driver/apply [post]
-
-func (h *DriverHandler) ApplyAsDriver(c *fiber.Ctx) error {
+func (h *DriverHandler) ApplyAsDriver(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 
 	// Check if user already has driver role
 	var role string
 	database.DB.QueryRow("SELECT role FROM users WHERE id = $1", userID).Scan(&role)
 	if role == string(models.RoleDriver) {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "You are already a driver"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "You are already a driver"})
+		return
 	}
 
 	// Check if application already exists
@@ -61,22 +62,19 @@ func (h *DriverHandler) ApplyAsDriver(c *fiber.Ctx) error {
 		WHERE user_id = $1 AND status = 'pending'
 	`, userID).Scan(&existingID)
 	if err == nil {
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Application already submitted and pending review"})
+		c.JSON(http.StatusConflict, gin.H{"error": "Application already submitted and pending review"})
+		return
 	}
 
 	// Get form data
-	req := ApplyAsDriverRequest{
-		FullName:  c.FormValue("full_name"),
-		CarModel:  c.FormValue("car_model"),
-		CarNumber: c.FormValue("car_number"),
-	}
-	if err := requestValidator.Struct(req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": humanizeValidationError(err)})
-	}
+	fullName := c.PostForm("full_name")
+	carModel := c.PostForm("car_model")
+	carNumber := c.PostForm("car_number")
 
-	fullName := req.FullName
-	carModel := req.CarModel
-	carNumber := req.CarNumber
+	if fullName == "" || carModel == "" || carNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "All fields are required"})
+		return
+	}
 
 	// Get phone number
 	var phoneNumber string
@@ -85,13 +83,15 @@ func (h *DriverHandler) ApplyAsDriver(c *fiber.Ctx) error {
 	// Handle license image upload
 	file, err := c.FormFile("license_image")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "License image is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "License image is required"})
+		return
 	}
 
 	// Save license image
 	licenseImage, err := utils.SaveUploadedFile(file, h.cfg.Upload.Directory, "licenses")
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Create application
@@ -107,12 +107,13 @@ func (h *DriverHandler) ApplyAsDriver(c *fiber.Ctx) error {
 	)
 	if err != nil {
 		utils.DeleteFile(h.cfg.Upload.Directory, licenseImage)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create application"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create application"})
+		return
 	}
 
 	// TODO: Send notification to telegram admin group
 
-	return c.Status(fiber.StatusCreated).JSON(application)
+	c.JSON(http.StatusCreated, application)
 }
 
 // GetDriverProfile godoc
@@ -123,8 +124,7 @@ func (h *DriverHandler) ApplyAsDriver(c *fiber.Ctx) error {
 // @Produce json
 // @Success 200 {object} models.Driver
 // @Router /driver/profile [get]
-
-func (h *DriverHandler) GetDriverProfile(c *fiber.Ctx) error {
+func (h *DriverHandler) GetDriverProfile(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 
 	var driver models.Driver
@@ -138,13 +138,15 @@ func (h *DriverHandler) GetDriverProfile(c *fiber.Ctx) error {
 		&driver.Status, &driver.IsActive, &driver.CreatedAt, &driver.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Driver profile not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Driver profile not found"})
+		return
 	}
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
 	}
 
-	return c.Status(fiber.StatusOK).JSON(driver)
+	c.JSON(http.StatusOK, driver)
 }
 
 // UpdateDriverProfileRequest represents driver profile update
@@ -164,16 +166,13 @@ type UpdateDriverProfileRequest struct {
 // @Param request body UpdateDriverProfileRequest true "Profile update"
 // @Success 200 {object} models.Driver
 // @Router /driver/profile [put]
-
-func (h *DriverHandler) UpdateDriverProfile(c *fiber.Ctx) error {
+func (h *DriverHandler) UpdateDriverProfile(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 
 	var req UpdateDriverProfileRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
-	}
-	if req.FullName == "" && req.CarModel == "" && req.CarNumber == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "No fields to update"})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	var driver models.Driver
@@ -188,10 +187,11 @@ func (h *DriverHandler) UpdateDriverProfile(c *fiber.Ctx) error {
 		&driver.Status, &driver.IsActive, &driver.CreatedAt, &driver.UpdatedAt,
 	)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update profile"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update profile"})
+		return
 	}
 
-	return c.Status(fiber.StatusOK).JSON(driver)
+	c.JSON(http.StatusOK, driver)
 }
 
 // GetNewOrders godoc
@@ -205,8 +205,7 @@ func (h *DriverHandler) UpdateDriverProfile(c *fiber.Ctx) error {
 // @Param to_region query int false "Filter by to region"
 // @Success 200 {array} models.Order
 // @Router /driver/orders/new [get]
-
-func (h *DriverHandler) GetNewOrders(c *fiber.Ctx) error {
+func (h *DriverHandler) GetNewOrders(c *gin.Context) {
 	orderType := c.Query("type")
 	fromRegion := c.Query("from_region")
 	toRegion := c.Query("to_region")
@@ -235,7 +234,8 @@ func (h *DriverHandler) GetNewOrders(c *fiber.Ctx) error {
 
 	rows, err := database.DB.Query(query, args...)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch orders"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch orders"})
+		return
 	}
 	defer rows.Close()
 
@@ -258,7 +258,7 @@ func (h *DriverHandler) GetNewOrders(c *fiber.Ctx) error {
 		orders = append(orders, order)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(orders)
+	c.JSON(http.StatusOK, orders)
 }
 
 // AcceptOrder godoc
@@ -270,8 +270,7 @@ func (h *DriverHandler) GetNewOrders(c *fiber.Ctx) error {
 // @Param id path int true "Order ID"
 // @Success 200 {object} models.Order
 // @Router /driver/orders/{id}/accept [post]
-
-func (h *DriverHandler) AcceptOrder(c *fiber.Ctx) error {
+func (h *DriverHandler) AcceptOrder(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 	orderID := c.Param("id")
 
@@ -281,12 +280,14 @@ func (h *DriverHandler) AcceptOrder(c *fiber.Ctx) error {
 		SELECT id, balance, is_active FROM drivers WHERE user_id = $1
 	`, userID).Scan(&driver.ID, &driver.Balance, &driver.IsActive)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Driver profile not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Driver profile not found"})
+		return
 	}
 
 	// Check if driver is active
 	if !driver.IsActive {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Driver account is not active"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Driver account is not active"})
+		return
 	}
 
 	// Get order
@@ -296,45 +297,49 @@ func (h *DriverHandler) AcceptOrder(c *fiber.Ctx) error {
 		FROM orders WHERE id = $1
 	`, orderID).Scan(&order.ID, &order.Status, &order.ServiceFee, &order.AcceptDeadline)
 	if err == sql.ErrNoRows {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Order not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
+		return
 	}
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
 	}
 
 	// Check order status
 	if order.Status != models.OrderStatusPending {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Order is no longer available"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Order is no longer available"})
+		return
 	}
 
 	// Check accept deadline
 	if order.AcceptDeadline != nil && order.AcceptDeadline.Before(time.Now()) {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Order acceptance deadline has passed"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Order acceptance deadline has passed"})
+		return
 	}
 
 	// Check driver balance
 	if driver.Balance < order.ServiceFee {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Insufficient balance to accept order"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Insufficient balance to accept order"})
+		return
 	}
 
 	// Begin transaction
 	tx, err := database.DB.Begin()
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
 	}
 	defer tx.Rollback()
 
 	// Update order
-	res, err := tx.Exec(`
+	_, err = tx.Exec(`
 		UPDATE orders SET driver_id = $1, status = $2, accepted_at = CURRENT_TIMESTAMP, 
 		                  accept_deadline = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $3 AND status = $4
 	`, driver.ID, models.OrderStatusAccepted, orderID, models.OrderStatusPending)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to accept order"})
-	}
-	if rows, _ := res.RowsAffected(); rows == 0 {
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Order already processed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to accept order"})
+		return
 	}
 
 	// Deduct service fee from driver balance
@@ -342,7 +347,8 @@ func (h *DriverHandler) AcceptOrder(c *fiber.Ctx) error {
 		UPDATE drivers SET balance = balance - $1 WHERE id = $2
 	`, order.ServiceFee, driver.ID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update balance"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update balance"})
+		return
 	}
 
 	// Create transaction record
@@ -351,12 +357,14 @@ func (h *DriverHandler) AcceptOrder(c *fiber.Ctx) error {
 		VALUES ($1, $2, $3, $4, $5)
 	`, driver.ID, order.ID, -order.ServiceFee, "debit", "Service fee for accepting order")
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create transaction"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create transaction"})
+		return
 	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to commit transaction"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
 	}
 
 	// Get updated order
@@ -370,13 +378,10 @@ func (h *DriverHandler) AcceptOrder(c *fiber.Ctx) error {
 		&order.AcceptedAt, &order.AcceptDeadline, &order.CompletedAt, &order.CancelledAt,
 		&order.CreatedAt, &order.UpdatedAt,
 	)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch updated order"})
-	}
 
 	// TODO: Send notification to user
 
-	return c.Status(fiber.StatusOK).JSON(order)
+	c.JSON(http.StatusOK, order)
 }
 
 // CompleteOrder godoc
@@ -388,8 +393,7 @@ func (h *DriverHandler) AcceptOrder(c *fiber.Ctx) error {
 // @Param id path int true "Order ID"
 // @Success 200 {object} map[string]string
 // @Router /driver/orders/{id}/complete [post]
-
-func (h *DriverHandler) CompleteOrder(c *fiber.Ctx) error {
+func (h *DriverHandler) CompleteOrder(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 	orderID := c.Param("id")
 
@@ -397,7 +401,8 @@ func (h *DriverHandler) CompleteOrder(c *fiber.Ctx) error {
 	var driverID int64
 	err := database.DB.QueryRow("SELECT id FROM drivers WHERE user_id = $1", userID).Scan(&driverID)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Driver profile not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Driver profile not found"})
+		return
 	}
 
 	// Update order
@@ -406,17 +411,19 @@ func (h *DriverHandler) CompleteOrder(c *fiber.Ctx) error {
 		WHERE id = $2 AND driver_id = $3 AND status = $4
 	`, models.OrderStatusCompleted, orderID, driverID, models.OrderStatusAccepted)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to complete order"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to complete order"})
+		return
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Order not found or not assigned to you"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Order not found or not assigned to you"})
+		return
 	}
 
 	// TODO: Send notification to user for rating
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Order completed successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Order completed successfully"})
 }
 
 // GetDriverOrders godoc
@@ -428,8 +435,7 @@ func (h *DriverHandler) CompleteOrder(c *fiber.Ctx) error {
 // @Param status query string false "Filter by status"
 // @Success 200 {array} models.Order
 // @Router /driver/orders [get]
-
-func (h *DriverHandler) GetDriverOrders(c *fiber.Ctx) error {
+func (h *DriverHandler) GetDriverOrders(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 	status := c.Query("status")
 
@@ -437,7 +443,8 @@ func (h *DriverHandler) GetDriverOrders(c *fiber.Ctx) error {
 	var driverID int64
 	err := database.DB.QueryRow("SELECT id FROM drivers WHERE user_id = $1", userID).Scan(&driverID)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Driver profile not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Driver profile not found"})
+		return
 	}
 
 	query := "SELECT * FROM orders WHERE driver_id = $1"
@@ -452,7 +459,8 @@ func (h *DriverHandler) GetDriverOrders(c *fiber.Ctx) error {
 
 	rows, err := database.DB.Query(query, args...)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch orders"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch orders"})
+		return
 	}
 	defer rows.Close()
 
@@ -475,7 +483,7 @@ func (h *DriverHandler) GetDriverOrders(c *fiber.Ctx) error {
 		orders = append(orders, order)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(orders)
+	c.JSON(http.StatusOK, orders)
 }
 
 // DriverStatistics represents driver statistics
@@ -497,8 +505,7 @@ type DriverStatistics struct {
 // @Param period query string false "Period (daily/monthly/yearly)"
 // @Success 200 {object} DriverStatistics
 // @Router /driver/statistics [get]
-
-func (h *DriverHandler) GetDriverStatistics(c *fiber.Ctx) error {
+func (h *DriverHandler) GetDriverStatistics(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 	period := c.Query("period")
 
@@ -508,7 +515,8 @@ func (h *DriverHandler) GetDriverStatistics(c *fiber.Ctx) error {
 		SELECT id, balance, rating, total_ratings FROM drivers WHERE user_id = $1
 	`, userID).Scan(&driver.ID, &driver.Balance, &driver.Rating, &driver.TotalRatings)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Driver profile not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Driver profile not found"})
+		return
 	}
 
 	// Build query based on period
@@ -534,12 +542,13 @@ func (h *DriverHandler) GetDriverStatistics(c *fiber.Ctx) error {
 		WHERE o.driver_id = $1 %s
 	`, timeFilter), driver.ID).Scan(&stats.TotalOrders, &stats.CompletedOrders, &stats.TotalEarnings)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch statistics"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch statistics"})
+		return
 	}
 
 	stats.CurrentBalance = driver.Balance
 	stats.AverageRating = driver.Rating
 	stats.TotalRatings = driver.TotalRatings
 
-	return c.Status(fiber.StatusOK).JSON(stats)
+	c.JSON(http.StatusOK, stats)
 }

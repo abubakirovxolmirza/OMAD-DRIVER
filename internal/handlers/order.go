@@ -3,9 +3,10 @@ package handlers
 import (
 	"database/sql"
 	"fmt"
+	"net/http"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gin-gonic/gin"
 	"taxi-service/internal/config"
 	"taxi-service/internal/database"
 	"taxi-service/internal/middleware"
@@ -24,44 +25,44 @@ func NewOrderHandler(cfg *config.Config) *OrderHandler {
 
 // CreateTaxiOrderRequest represents taxi order creation request
 type CreateTaxiOrderRequest struct {
-	CustomerName    string   `json:"customer_name" validate:"required"`
-	CustomerPhone   string   `json:"customer_phone" validate:"required"`
-	FromRegionID    int64    `json:"from_region_id" validate:"required"`
-	FromDistrictID  int64    `json:"from_district_id" validate:"required"`
-	FromLatitude    *float64 `json:"from_latitude"`
-	FromLongitude   *float64 `json:"from_longitude"`
-	FromAddress     *string  `json:"from_address"`
-	ToRegionID      int64    `json:"to_region_id" validate:"required"`
-	ToDistrictID    int64    `json:"to_district_id" validate:"required"`
-	ToLatitude      *float64 `json:"to_latitude"`
-	ToLongitude     *float64 `json:"to_longitude"`
-	ToAddress       *string  `json:"to_address"`
-	PassengerCount  int      `json:"passenger_count" validate:"required,min=1,max=4"`
-	ScheduledDate   string   `json:"scheduled_date" validate:"required"`
-	TimeRangeStart  string   `json:"time_range_start" validate:"required"`
-	TimeRangeEnd    string   `json:"time_range_end" validate:"required"`
-	Notes           string   `json:"notes"`
+	CustomerName    string    `json:"customer_name" binding:"required"`
+	CustomerPhone   string    `json:"customer_phone" binding:"required"`
+	FromRegionID    int64     `json:"from_region_id" binding:"required"`
+	FromDistrictID  int64     `json:"from_district_id" binding:"required"`
+	FromLatitude    *float64  `json:"from_latitude"`
+	FromLongitude   *float64  `json:"from_longitude"`
+	FromAddress     *string   `json:"from_address"`
+	ToRegionID      int64     `json:"to_region_id" binding:"required"`
+	ToDistrictID    int64     `json:"to_district_id" binding:"required"`
+	ToLatitude      *float64  `json:"to_latitude"`
+	ToLongitude     *float64  `json:"to_longitude"`
+	ToAddress       *string   `json:"to_address"`
+	PassengerCount  int       `json:"passenger_count" binding:"required,min=1,max=4"`
+	ScheduledDate   string    `json:"scheduled_date" binding:"required"` // DD.MM.YYYY
+	TimeRangeStart  string    `json:"time_range_start" binding:"required"`
+	TimeRangeEnd    string    `json:"time_range_end" binding:"required"`
+	Notes           string    `json:"notes"`
 }
 
 // CreateDeliveryOrderRequest represents delivery order creation request
 type CreateDeliveryOrderRequest struct {
-	CustomerName    string   `json:"customer_name" validate:"required"`
-	CustomerPhone   string   `json:"customer_phone" validate:"required"`
-	RecipientPhone  string   `json:"recipient_phone" validate:"required"`
-	FromRegionID    int64    `json:"from_region_id" validate:"required"`
-	FromDistrictID  int64    `json:"from_district_id" validate:"required"`
+	CustomerName    string   `json:"customer_name" binding:"required"`
+	CustomerPhone   string   `json:"customer_phone" binding:"required"`
+	RecipientPhone  string   `json:"recipient_phone" binding:"required"`
+	FromRegionID    int64    `json:"from_region_id" binding:"required"`
+	FromDistrictID  int64    `json:"from_district_id" binding:"required"`
 	FromLatitude    *float64 `json:"from_latitude"`
 	FromLongitude   *float64 `json:"from_longitude"`
 	FromAddress     *string  `json:"from_address"`
-	ToRegionID      int64    `json:"to_region_id" validate:"required"`
-	ToDistrictID    int64    `json:"to_district_id" validate:"required"`
+	ToRegionID      int64    `json:"to_region_id" binding:"required"`
+	ToDistrictID    int64    `json:"to_district_id" binding:"required"`
 	ToLatitude      *float64 `json:"to_latitude"`
 	ToLongitude     *float64 `json:"to_longitude"`
 	ToAddress       *string  `json:"to_address"`
-	DeliveryType    string   `json:"delivery_type" validate:"required"`
-	ScheduledDate   string   `json:"scheduled_date" validate:"required"`
-	TimeRangeStart  string   `json:"time_range_start" validate:"required"`
-	TimeRangeEnd    string   `json:"time_range_end" validate:"required"`
+	DeliveryType    string   `json:"delivery_type" binding:"required"`
+	ScheduledDate   string   `json:"scheduled_date" binding:"required"` // DD.MM.YYYY
+	TimeRangeStart  string   `json:"time_range_start" binding:"required"`
+	TimeRangeEnd    string   `json:"time_range_end" binding:"required"`
 	Notes           string   `json:"notes"`
 }
 
@@ -76,30 +77,33 @@ type CreateDeliveryOrderRequest struct {
 // @Success 201 {object} models.Order
 // @Failure 400 {object} map[string]string
 // @Router /orders/taxi [post]
-
-func (h *OrderHandler) CreateTaxiOrder(c *fiber.Ctx) error {
+func (h *OrderHandler) CreateTaxiOrder(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 
 	var req CreateTaxiOrderRequest
-	if err := parseAndValidateJSON(c, &req); err != nil {
-		return err
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Parse date
 	scheduledDate, err := time.Parse("02.01.2006", req.ScheduledDate)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid date format, use DD.MM.YYYY"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date format, use DD.MM.YYYY"})
+		return
 	}
 
 	// Validate regions are different
 	if req.FromRegionID == req.ToRegionID {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "From and To regions must be different"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "From and To regions must be different"})
+		return
 	}
 
 	// Calculate price
 	price, serviceFee, discount, finalPriceCalc, err := h.calculateTaxiPrice(req.FromRegionID, req.ToRegionID, req.PassengerCount)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Create order
@@ -130,7 +134,8 @@ func (h *OrderHandler) CreateTaxiOrder(c *fiber.Ctx) error {
 	).Scan(&order.ID, &order.CreatedAt, &order.UpdatedAt)
 
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create order"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create order"})
+		return
 	}
 
 	// Populate order details for response
@@ -165,7 +170,7 @@ func (h *OrderHandler) CreateTaxiOrder(c *fiber.Ctx) error {
 	// TODO: Send notification to all drivers
 	go h.notifyDriversNewOrder(order.ID, models.OrderTypeTaxi)
 
-	return c.Status(fiber.StatusCreated).JSON(order)
+	c.JSON(http.StatusCreated, order)
 }
 
 // CreateDeliveryOrder godoc
@@ -179,30 +184,33 @@ func (h *OrderHandler) CreateTaxiOrder(c *fiber.Ctx) error {
 // @Success 201 {object} models.Order
 // @Failure 400 {object} map[string]string
 // @Router /orders/delivery [post]
-
-func (h *OrderHandler) CreateDeliveryOrder(c *fiber.Ctx) error {
+func (h *OrderHandler) CreateDeliveryOrder(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 
 	var req CreateDeliveryOrderRequest
-	if err := parseAndValidateJSON(c, &req); err != nil {
-		return err
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Parse date
 	scheduledDate, err := time.Parse("02.01.2006", req.ScheduledDate)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid date format, use DD.MM.YYYY"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date format, use DD.MM.YYYY"})
+		return
 	}
 
 	// Validate regions are different
 	if req.FromRegionID == req.ToRegionID {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "From and To regions must be different"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "From and To regions must be different"})
+		return
 	}
 
 	// Calculate price (same as taxi base price)
 	price, serviceFee, _, finalPrice, err := h.calculateTaxiPrice(req.FromRegionID, req.ToRegionID, 1)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Create order
@@ -233,13 +241,14 @@ func (h *OrderHandler) CreateDeliveryOrder(c *fiber.Ctx) error {
 	).Scan(&order.ID, &order.CreatedAt, &order.UpdatedAt)
 
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create order"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create order"})
+		return
 	}
 
 	// TODO: Send notification to all drivers
 	go h.notifyDriversNewOrder(order.ID, models.OrderTypeDelivery)
 
-	return c.Status(fiber.StatusCreated).JSON(order)
+	c.JSON(http.StatusCreated, order)
 }
 
 // GetMyOrders godoc
@@ -252,8 +261,7 @@ func (h *OrderHandler) CreateDeliveryOrder(c *fiber.Ctx) error {
 // @Param type query string false "Filter by type (taxi/delivery)"
 // @Success 200 {array} models.Order
 // @Router /orders/my [get]
-
-func (h *OrderHandler) GetMyOrders(c *fiber.Ctx) error {
+func (h *OrderHandler) GetMyOrders(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 	status := c.Query("status")
 	orderType := c.Query("type")
@@ -278,7 +286,8 @@ func (h *OrderHandler) GetMyOrders(c *fiber.Ctx) error {
 
 	rows, err := database.DB.Query(query, args...)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch orders"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch orders"})
+		return
 	}
 	defer rows.Close()
 
@@ -301,7 +310,7 @@ func (h *OrderHandler) GetMyOrders(c *fiber.Ctx) error {
 		orders = append(orders, order)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(orders)
+	c.JSON(http.StatusOK, orders)
 }
 
 // GetOrderByID godoc
@@ -313,7 +322,7 @@ func (h *OrderHandler) GetMyOrders(c *fiber.Ctx) error {
 // @Param id path int true "Order ID"
 // @Success 200 {object} models.Order
 // @Router /orders/{id} [get]
-func (h *OrderHandler) GetOrderByID(c *fiber.Ctx) error {
+func (h *OrderHandler) GetOrderByID(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 	userRole, _ := middleware.GetUserRole(c)
 	orderID := c.Param("id")
@@ -335,10 +344,12 @@ func (h *OrderHandler) GetOrderByID(c *fiber.Ctx) error {
 			&order.CreatedAt, &order.UpdatedAt,
 		)
 		if err == sql.ErrNoRows {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Order not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
+			return
 		}
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			return
 		}
 	} else {
 		// Drivers and admins can see any order
@@ -353,14 +364,16 @@ func (h *OrderHandler) GetOrderByID(c *fiber.Ctx) error {
 			&order.CreatedAt, &order.UpdatedAt,
 		)
 		if err == sql.ErrNoRows {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Order not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
+			return
 		}
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			return
 		}
 	}
 
-	return c.Status(fiber.StatusOK).JSON(order)
+	c.JSON(http.StatusOK, order)
 }
 
 // CancelOrder godoc
@@ -374,16 +387,16 @@ func (h *OrderHandler) GetOrderByID(c *fiber.Ctx) error {
 // @Param request body map[string]string true "Cancellation reason"
 // @Success 200 {object} map[string]string
 // @Router /orders/{id}/cancel [post]
-
-func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
+func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 	orderID := c.Param("id")
 
 	var req struct {
-		Reason string `json:"reason" validate:"required"`
+		Reason string `json:"reason" binding:"required"`
 	}
-	if err := parseAndValidateJSON(c, &req); err != nil {
-		return err
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Get order details
@@ -394,15 +407,18 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 	`, orderID, userID).Scan(&order.ID, &order.UserID, &order.DriverID, &order.Status, &order.ServiceFee)
 	
 	if err == sql.ErrNoRows {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Order not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
+		return
 	}
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
 	}
 
 	// Can only cancel pending or accepted orders
 	if order.Status != models.OrderStatusPending && order.Status != models.OrderStatusAccepted {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Cannot cancel order in current status"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot cancel order in current status"})
+		return
 	}
 
 	// Update order status
@@ -411,7 +427,8 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 		WHERE id = $3
 	`, models.OrderStatusCancelled, req.Reason, orderID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to cancel order"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cancel order"})
+		return
 	}
 
 	// Refund driver if order was accepted
@@ -434,7 +451,7 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 	// TODO: Send notification to telegram group
 	// TODO: Notify driver if assigned
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Order cancelled successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Order cancelled successfully"})
 }
 
 // Helper functions

@@ -25,7 +25,6 @@ type ServerConfig struct {
 	Port string
 	Host string
 	Env  string
-	Domain string
 }
 
 // DatabaseConfig holds database configuration
@@ -79,10 +78,9 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		Server: ServerConfig{
-			Port:   getEnv("SERVER_PORT", "8080"),
-			Host:   getEnv("SERVER_HOST", "0.0.0.0"),
-			Env:    getEnv("ENV", "development"),
-			Domain: getEnv("SERVER_DOMAIN", "api.omad-driver.uz"),
+			Port: getEnv("SERVER_PORT", "8080"),
+			Host: getEnv("SERVER_HOST", "0.0.0.0"),
+			Env:  getEnv("ENV", "development"),
 		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
@@ -105,7 +103,7 @@ func Load() (*Config, error) {
 			AdminGroupID: getEnv("TELEGRAM_ADMIN_GROUP_ID", ""),
 		},
 		CORS: CORSConfig{
-			AllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", "https://api.omad-driver.uz,https://*.omad-driver.uz,https://docs.omad-driver.uz,http://localhost:3000,http://localhost:5173"),
+			AllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", "https://api.omad-driver.uz,https://omad-driver.uz,http://localhost:3000,http://localhost:5173"),
 		},
 		Pricing: PricingConfig{
 			Discount1Person:      getEnvAsFloat("DISCOUNT_1_PERSON", 0),

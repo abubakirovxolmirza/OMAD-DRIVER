@@ -1,6 +1,6 @@
 # Ubuntu Server Deployment Guide
 
-Complete guide for deploying the Taxi Service backend on Ubuntu Server. For a condensed checklist, see [`docs/DEPLOYMENT_PLAYBOOK.md`](docs/DEPLOYMENT_PLAYBOOK.md).
+Complete guide for deploying the Taxi Service backend on Ubuntu Server.
 
 ## Prerequisites
 
@@ -196,7 +196,6 @@ Add configuration:
 # Server Configuration
 SERVER_PORT=8080
 SERVER_HOST=127.0.0.1
-SERVER_DOMAIN=api.omad-driver.uz
 ENV=production
 
 # Database Configuration
@@ -220,7 +219,7 @@ TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_ADMIN_GROUP_ID=your_admin_group_id
 
 # CORS Configuration
-CORS_ALLOWED_ORIGINS=https://api.omad-driver.uz,https://docs.omad-driver.uz
+CORS_ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 ```
 
 **Security Note**: Generate a strong JWT secret:

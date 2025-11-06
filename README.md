@@ -36,7 +36,7 @@ A professional taxi and delivery service backend built with Go, PostgreSQL, and 
 ## Technology Stack
 
 - **Language**: Go 1.21+
-- **Framework**: [Fiber v2](https://github.com/gofiber/fiber)
+- **Framework**: Gin Web Framework
 - **Database**: PostgreSQL 12+
 - **Authentication**: JWT (JSON Web Tokens)
 - **Password Hashing**: bcrypt
@@ -130,17 +130,7 @@ Or using psql:
 CREATE DATABASE taxi_service;
 ```
 
-### 5. Seed Reference Data (Optional but Recommended)
-
-Load all Uzbekistan regions, districts, and pricing reference data:
-
-```bash
-make db-seed
-```
-
-Without `make`, run `go run ./cmd/tools/dbseed` and follow the confirmation prompt.
-
-### 6. Run the Application
+### 5. Run the Application
 
 The application will automatically create all necessary tables on first run:
 
@@ -154,7 +144,7 @@ Or using Make:
 make run
 ```
 
-### 7. Access the Application
+### 6. Access the Application
 
 - **API Base URL**: http://localhost:8080/api/v1
 - **Swagger Documentation**: http://localhost:8080/swagger/index.html
@@ -235,15 +225,6 @@ This creates a `taxi-service` binary in the project root.
 
 See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for complete API reference.
 
-### Additional Documentation
-
-- [`docs/FRONTEND_INTEGRATION.md`](docs/FRONTEND_INTEGRATION.md) — Frontend-specific guidance
-- [`docs/DEPLOYMENT_PLAYBOOK.md`](docs/DEPLOYMENT_PLAYBOOK.md) — Ops playbook for production rollout
-
-## Frontend Integration
-
-- Follow the integration checklist in [`docs/FRONTEND_INTEGRATION.md`](docs/FRONTEND_INTEGRATION.md) for role handling, headers, and error conventions.
-
 ## Database Schema
 
 ### Main Tables
@@ -323,7 +304,7 @@ For support, email support@taxiservice.com or create an issue in the repository.
 
 ## Acknowledgments
 
-- [Fiber Web Framework](https://github.com/gofiber/fiber)
+- [Gin Web Framework](https://github.com/gin-gonic/gin)
 - [PostgreSQL](https://www.postgresql.org/)
 - [Swagger](https://swagger.io/)
 - All contributors and users of this project
