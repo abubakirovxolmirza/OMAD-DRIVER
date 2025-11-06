@@ -2,9 +2,8 @@ package handlers
 
 import (
 	"database/sql"
-	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"taxi-service/internal/config"
 	"taxi-service/internal/database"
 	"taxi-service/internal/middleware"
@@ -24,22 +23,23 @@ func NewAuthHandler(cfg *config.Config) *AuthHandler {
 
 // RegisterRequest represents registration request
 type RegisterRequest struct {
-	PhoneNumber     string `json:"phone_number" binding:"required"`
-	Name            string `json:"name" binding:"required"`
-	Password        string `json:"password" binding:"required,min=6"`
-	ConfirmPassword string `json:"confirm_password" binding:"required"`
+	PhoneNumber     string `json:"phone_number" validate:"required"`
+	Name            string `json:"name" validate:"required"`
+	Password        string `json:"password" validate:"required,min=6"`
+	ConfirmPassword string `json:"confirm_password" validate:"required"`
 }
 
 // LoginRequest represents login request
 type LoginRequest struct {
-	PhoneNumber string `json:"phone_number" binding:"required"`
-	Password    string `json:"password" binding:"required"`
+	PhoneNumber string `json:"phone_number" validate:"required"`
+	Password    string `json:"password" validate:"required"`
 }
 
 // AuthResponse represents authentication response
 type AuthResponse struct {
-	Token string       `json:"token"`
-	User  *models.User `json:"user"`
+	Token string         `json:"token"`
+	Role  models.UserRole `json:"role"`
+	User  *models.User   `json:"user"`
 }
 
 // Register godoc
@@ -53,32 +53,31 @@ type AuthResponse struct {
 // @Failure 400 {object} map[string]string
 // @Failure 409 {object} map[string]string
 // @Router /auth/register [post]
-func (h *AuthHandler) Register(c *gin.Context) {
+func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	var req RegisterRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := parseAndValidateJSON(c, &req); err != nil {
+		return err
 	}
 
 	// Validate passwords match
 	if req.Password != req.ConfirmPassword {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Passwords do not match"})
-		return
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Passwords do not match"})
 	}
 
 	// Check if user already exists
 	var existingID int64
 	err := database.DB.QueryRow("SELECT id FROM users WHERE phone_number = $1", req.PhoneNumber).Scan(&existingID)
 	if err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Phone number already registered"})
-		return
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Phone number already registered"})
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
 	}
 
 	// Hash password
 	hashedPassword, err := utils.HashPassword(req.Password)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process password"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process password"})
 	}
 
 	// Insert user
@@ -92,19 +91,18 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		&user.Avatar, &user.IsBlocked, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create user"})
 	}
 
 	// Generate token
 	token, err := utils.GenerateToken(user.ID, user.Role, h.cfg.JWT.Secret, h.cfg.JWT.ExpirationHours)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
 	}
 
-	c.JSON(http.StatusCreated, AuthResponse{
+	return c.Status(fiber.StatusCreated).JSON(AuthResponse{
 		Token: token,
+		Role:  user.Role,
 		User:  &user,
 	})
 }
@@ -120,11 +118,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
 // @Router /auth/login [post]
-func (h *AuthHandler) Login(c *gin.Context) {
+func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	var req LoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := parseAndValidateJSON(c, &req); err != nil {
+		return err
 	}
 
 	// Get user by phone number
@@ -137,38 +134,34 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		&user.Language, &user.Avatar, &user.IsBlocked, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
-		return
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
 	}
 
 	// Check if user is blocked
 	if user.IsBlocked {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Account is blocked"})
-		return
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Account is blocked"})
 	}
 
 	// Verify password
 	if err := utils.CheckPassword(user.Password, req.Password); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
-		return
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
 	}
 
 	// Generate token
 	token, err := utils.GenerateToken(user.ID, user.Role, h.cfg.JWT.Secret, h.cfg.JWT.ExpirationHours)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
 	}
 
 	// Clear password from response
 	user.Password = ""
 
-	c.JSON(http.StatusOK, AuthResponse{
+	return c.Status(fiber.StatusOK).JSON(AuthResponse{
 		Token: token,
+		Role:  user.Role,
 		User:  &user,
 	})
 }
@@ -182,7 +175,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 // @Success 200 {object} models.User
 // @Failure 401 {object} map[string]string
 // @Router /auth/profile [get]
-func (h *AuthHandler) GetProfile(c *gin.Context) {
+func (h *AuthHandler) GetProfile(c *fiber.Ctx) error {
 	userID, _ := middleware.GetUserID(c)
 
 	var user models.User
@@ -194,11 +187,10 @@ func (h *AuthHandler) GetProfile(c *gin.Context) {
 		&user.Language, &user.Avatar, &user.IsBlocked, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get profile"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get profile"})
 	}
 
-	c.JSON(http.StatusOK, user)
+	return c.Status(fiber.StatusOK).JSON(user)
 }
 
 // UpdateProfileRequest represents profile update request
@@ -218,13 +210,12 @@ type UpdateProfileRequest struct {
 // @Success 200 {object} models.User
 // @Failure 400 {object} map[string]string
 // @Router /auth/profile [put]
-func (h *AuthHandler) UpdateProfile(c *gin.Context) {
+func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
 	userID, _ := middleware.GetUserID(c)
 
 	var req UpdateProfileRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
 
 	var user models.User
@@ -237,18 +228,17 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		&user.Language, &user.Avatar, &user.IsBlocked, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update profile"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update profile"})
 	}
 
-	c.JSON(http.StatusOK, user)
+	return c.Status(fiber.StatusOK).JSON(user)
 }
 
 // ChangePasswordRequest represents password change request
 type ChangePasswordRequest struct {
-	OldPassword        string `json:"old_password" binding:"required"`
-	NewPassword        string `json:"new_password" binding:"required,min=6"`
-	ConfirmNewPassword string `json:"confirm_new_password" binding:"required"`
+	OldPassword        string `json:"old_password" validate:"required"`
+	NewPassword        string `json:"new_password" validate:"required,min=6"`
+	ConfirmNewPassword string `json:"confirm_new_password" validate:"required"`
 }
 
 // ChangePassword godoc
@@ -262,50 +252,44 @@ type ChangePasswordRequest struct {
 // @Success 200 {object} map[string]string
 // @Failure 400 {object} map[string]string
 // @Router /auth/change-password [post]
-func (h *AuthHandler) ChangePassword(c *gin.Context) {
+func (h *AuthHandler) ChangePassword(c *fiber.Ctx) error {
 	userID, _ := middleware.GetUserID(c)
 
 	var req ChangePasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := parseAndValidateJSON(c, &req); err != nil {
+		return err
 	}
 
 	// Validate new passwords match
 	if req.NewPassword != req.ConfirmNewPassword {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "New passwords do not match"})
-		return
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "New passwords do not match"})
 	}
 
 	// Get current password
 	var currentPassword string
 	err := database.DB.QueryRow("SELECT password FROM users WHERE id = $1", userID).Scan(&currentPassword)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
 	}
 
 	// Verify old password
 	if err := utils.CheckPassword(currentPassword, req.OldPassword); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid old password"})
-		return
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid old password"})
 	}
 
 	// Hash new password
 	hashedPassword, err := utils.HashPassword(req.NewPassword)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process password"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to process password"})
 	}
 
 	// Update password
 	_, err = database.DB.Exec("UPDATE users SET password = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2", hashedPassword, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update password"})
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully"})
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Password changed successfully"})
 }
 
 // UploadAvatar godoc
@@ -319,19 +303,17 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 // @Success 200 {object} map[string]string
 // @Failure 400 {object} map[string]string
 // @Router /auth/avatar [post]
-func (h *AuthHandler) UploadAvatar(c *gin.Context) {
+func (h *AuthHandler) UploadAvatar(c *fiber.Ctx) error {
 	userID, _ := middleware.GetUserID(c)
 
 	file, err := c.FormFile("avatar")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
-		return
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "No file uploaded"})
 	}
 
 	// Check file size
 	if file.Size > h.cfg.Upload.MaxFileSize {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File too large"})
-		return
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "File too large"})
 	}
 
 	// Get old avatar to delete
@@ -341,16 +323,14 @@ func (h *AuthHandler) UploadAvatar(c *gin.Context) {
 	// Save new file
 	relativePath, err := utils.SaveUploadedFile(file, h.cfg.Upload.Directory, "avatars")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	// Update user avatar
 	_, err = database.DB.Exec("UPDATE users SET avatar = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2", relativePath, userID)
 	if err != nil {
 		utils.DeleteFile(h.cfg.Upload.Directory, relativePath)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update avatar"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update avatar"})
 	}
 
 	// Delete old avatar
@@ -358,7 +338,7 @@ func (h *AuthHandler) UploadAvatar(c *gin.Context) {
 		utils.DeleteFile(h.cfg.Upload.Directory, oldAvatar.String)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "Avatar uploaded successfully",
 		"avatar":  relativePath,
 	})

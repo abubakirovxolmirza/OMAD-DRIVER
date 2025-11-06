@@ -55,6 +55,7 @@ Create a new user account.
 ```json
 {
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "role": "user",
   "user": {
     "id": 1,
     "phone_number": "+998901234567",
@@ -93,6 +94,7 @@ Authenticate and receive JWT token.
 ```json
 {
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "role": "admin",
   "user": {
     "id": 1,
     "phone_number": "+998901234567",

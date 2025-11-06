@@ -4,11 +4,12 @@ import (
 	"log"
 	"os"
 
-	"github.com/gin-gonic/gin"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+	fiberSwagger "github.com/gofiber/swagger"
 
-	_ "taxi-service/docs"
+	docs "taxi-service/docs"
 	"taxi-service/internal/config"
 	"taxi-service/internal/database"
 	"taxi-service/internal/handlers"
@@ -27,7 +28,7 @@ import (
 // @license.name MIT
 // @license.url https://opensource.org/licenses/MIT
 
-// @host 64.225.107.130
+// @host api.omad-driver.uz
 // @BasePath /api/v1
 // @schemes http https
 
@@ -35,6 +36,7 @@ import (
 // @in header
 // @name Authorization
 // @description Type "Bearer" followed by a space and JWT token.
+
 
 func main() {
 	// Load configuration
@@ -69,171 +71,137 @@ func main() {
 		log.Fatalf("Failed to create upload directory: %v", err)
 	}
 
-	// Setup router
-	router := setupRouter(cfg)
+	// Setup application
+	app := setupApp(cfg)
 
 	// Start server
 	addr := cfg.Server.Host + ":" + cfg.Server.Port
 	log.Printf("Starting server on %s", addr)
-	if err := router.Run(addr); err != nil {
+	if err := app.Listen(addr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
 
-func setupRouter(cfg *config.Config) *gin.Engine {
-	// Set Gin mode
-	if cfg.Server.Env == "production" {
-		gin.SetMode(gin.ReleaseMode)
-	}
+func setupApp(cfg *config.Config) *fiber.App {
+	app := fiber.New(fiber.Config{})
 
-	router := gin.Default()
+	docs.SwaggerInfo.Host = cfg.Server.Domain
+	docs.SwaggerInfo.BasePath = "/api/v1"
+	docs.SwaggerInfo.Schemes = []string{"https", "http"}
 
-	// CORS middleware
-	router.Use(middleware.CORSMiddleware(cfg.CORS.AllowedOrigins))
+	// Core middleware
+	app.Use(recover.New())
+	app.Use(logger.New())
+	app.Use(middleware.CORSMiddleware(cfg.CORS.AllowedOrigins))
 
 	// Serve static files (uploads)
-	router.Static("/uploads", cfg.Upload.Directory)
+	app.Static("/uploads", cfg.Upload.Directory)
 
 	// Swagger documentation
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	app.Get("/swagger/*", fiberSwagger.WrapHandler)
 
 	// Health check
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+	app.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
 	// API v1 routes
-	v1 := router.Group("/api/v1")
-	{
-		// Initialize handlers
-		authHandler := handlers.NewAuthHandler(cfg)
-		orderHandler := handlers.NewOrderHandler(cfg)
-		driverHandler := handlers.NewDriverHandler(cfg)
-		adminHandler := handlers.NewAdminHandler(cfg)
-		ratingHandler := handlers.NewRatingHandler()
-		notificationHandler := handlers.NewNotificationHandler()
-		regionHandler := handlers.NewRegionHandler()
-		feedbackHandler := handlers.NewFeedbackHandler()
+	v1 := app.Group("/api").Group("/v1")
 
-		// Public routes
-		auth := v1.Group("/auth")
-		{
-			auth.POST("/register", authHandler.Register)
-			auth.POST("/login", authHandler.Login)
-		}
+	// Initialize handlers
+	authHandler := handlers.NewAuthHandler(cfg)
+	orderHandler := handlers.NewOrderHandler(cfg)
+	driverHandler := handlers.NewDriverHandler(cfg)
+	adminHandler := handlers.NewAdminHandler(cfg)
+	ratingHandler := handlers.NewRatingHandler()
+	notificationHandler := handlers.NewNotificationHandler()
+	regionHandler := handlers.NewRegionHandler()
+	feedbackHandler := handlers.NewFeedbackHandler()
 
-		// Region routes (public)
-		regions := v1.Group("/regions")
-		{
-			regions.GET("", regionHandler.GetRegions)
-			regions.GET("/:id", regionHandler.GetRegion)
-			regions.GET("/:id/districts", regionHandler.GetDistricts)
-		}
+	// Public routes
+	auth := v1.Group("/auth")
+	auth.Post("/register", authHandler.Register)
+	auth.Post("/login", authHandler.Login)
 
-		// District routes (public)
-		districts := v1.Group("/districts")
-		{
-			districts.GET("/:id", regionHandler.GetDistrict)
-		}
+	// Region & district routes (public)
+	v1.Get("/regions", regionHandler.GetRegions)
+	v1.Get("/regions/:id", regionHandler.GetRegion)
+	v1.Get("/regions/:id/districts", regionHandler.GetDistricts)
+	v1.Get("/districts/:id", regionHandler.GetDistrict)
 
-		// Protected routes (require authentication)
-		protected := v1.Group("")
-		protected.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
-		{
-			// Auth/Profile routes
-			profile := protected.Group("/auth")
-			{
-				profile.GET("/profile", authHandler.GetProfile)
-				profile.PUT("/profile", authHandler.UpdateProfile)
-				profile.POST("/change-password", authHandler.ChangePassword)
-				profile.POST("/avatar", authHandler.UploadAvatar)
-			}
+	// Protected routes (require authentication)
+	protected := v1.Group("")
+	protected.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
 
-			// Order routes (users)
-			orders := protected.Group("/orders")
-			{
-				orders.POST("/taxi", orderHandler.CreateTaxiOrder)
-				orders.POST("/delivery", orderHandler.CreateDeliveryOrder)
-				orders.GET("/my", orderHandler.GetMyOrders)
-				orders.GET("/:id", orderHandler.GetOrderByID)
-				orders.POST("/:id/cancel", orderHandler.CancelOrder)
-			}
+	// Auth/Profile routes
+	profile := protected.Group("/auth")
+	profile.Get("/profile", authHandler.GetProfile)
+	profile.Put("/profile", authHandler.UpdateProfile)
+	profile.Post("/change-password", authHandler.ChangePassword)
+	profile.Post("/avatar", authHandler.UploadAvatar)
 
-			// Rating routes
-			ratings := protected.Group("/ratings")
-			{
-				ratings.POST("", ratingHandler.CreateRating)
-				ratings.GET("/driver/:driver_id", ratingHandler.GetDriverRatings)
-			}
+	// Order routes (users)
+	orders := protected.Group("/orders")
+	orders.Post("/taxi", orderHandler.CreateTaxiOrder)
+	orders.Post("/delivery", orderHandler.CreateDeliveryOrder)
+	orders.Get("/my", orderHandler.GetMyOrders)
+	orders.Get("/:id", orderHandler.GetOrderByID)
+	orders.Post("/:id/cancel", orderHandler.CancelOrder)
 
-			// Notification routes
-			notifications := protected.Group("/notifications")
-			{
-				notifications.GET("", notificationHandler.GetMyNotifications)
-				notifications.POST("/:id/read", notificationHandler.MarkNotificationRead)
-			}
+	// Rating routes
+	protected.Post("/ratings", ratingHandler.CreateRating)
+	protected.Get("/ratings/driver/:driver_id", ratingHandler.GetDriverRatings)
 
-			// Feedback routes
-			feedback := protected.Group("/feedback")
-			{
-				feedback.POST("", feedbackHandler.SubmitFeedback)
-			}
+	// Notification routes
+	protected.Get("/notifications", notificationHandler.GetMyNotifications)
+	protected.Post("/notifications/:id/read", notificationHandler.MarkNotificationRead)
 
-			// Driver routes (require driver role)
-			driver := protected.Group("/driver")
-			{
-				// Application (any user can apply)
-				driver.POST("/apply", driverHandler.ApplyAsDriver)
+	// Feedback routes
+	protected.Post("/feedback", feedbackHandler.SubmitFeedback)
 
-				// Driver-only routes
-				driverOnly := driver.Group("")
-				driverOnly.Use(middleware.RoleMiddleware(models.RoleDriver, models.RoleAdmin, models.RoleSuperAdmin))
-				{
-					driverOnly.GET("/profile", driverHandler.GetDriverProfile)
-					driverOnly.PUT("/profile", driverHandler.UpdateDriverProfile)
-					driverOnly.GET("/orders/new", driverHandler.GetNewOrders)
-					driverOnly.POST("/orders/:id/accept", driverHandler.AcceptOrder)
-					driverOnly.POST("/orders/:id/complete", driverHandler.CompleteOrder)
-					driverOnly.GET("/orders", driverHandler.GetDriverOrders)
-					driverOnly.GET("/statistics", driverHandler.GetDriverStatistics)
-				}
-			}
+	// Driver routes
+	driver := protected.Group("/driver")
+	driver.Post("/apply", driverHandler.ApplyAsDriver)
 
-			// Admin routes (require admin or superadmin role)
-			admin := protected.Group("/admin")
-			admin.Use(middleware.RoleMiddleware(models.RoleAdmin, models.RoleSuperAdmin))
-			{
-				admin.GET("/driver-applications", adminHandler.GetDriverApplications)
-				admin.POST("/driver-applications/:id/review", adminHandler.ReviewDriverApplication)
-				admin.GET("/drivers", adminHandler.GetDrivers)
-				admin.POST("/drivers/:id/add-balance", adminHandler.AddDriverBalance)
-				admin.POST("/users/:id/block", adminHandler.BlockUnblockUser)
-				admin.POST("/pricing", adminHandler.SetPricing)
-				admin.GET("/pricing", adminHandler.GetAllPricing)
-				admin.GET("/orders", adminHandler.GetAllOrders)
-				admin.GET("/statistics", adminHandler.GetStatistics)
-				admin.GET("/feedback", adminHandler.GetFeedback)
+	driverOnly := driver.Group("")
+	driverOnly.Use(middleware.RoleMiddleware(models.RoleDriver, models.RoleAdmin, models.RoleSuperAdmin))
+	driverOnly.Get("/profile", driverHandler.GetDriverProfile)
+	driverOnly.Put("/profile", driverHandler.UpdateDriverProfile)
+	driverOnly.Get("/orders/new", driverHandler.GetNewOrders)
+	driverOnly.Post("/orders/:id/accept", driverHandler.AcceptOrder)
+	driverOnly.Post("/orders/:id/complete", driverHandler.CompleteOrder)
+	driverOnly.Get("/orders", driverHandler.GetDriverOrders)
+	driverOnly.Get("/statistics", driverHandler.GetDriverStatistics)
 
-				// Region & District management (Admin only)
-				admin.POST("/regions", regionHandler.CreateRegion)
-				admin.PUT("/regions/:id", regionHandler.UpdateRegion)
-				admin.DELETE("/regions/:id", regionHandler.DeleteRegion)
-				admin.POST("/districts", regionHandler.CreateDistrict)
-				admin.PUT("/districts/:id", regionHandler.UpdateDistrict)
-				admin.DELETE("/districts/:id", regionHandler.DeleteDistrict)
+	// Admin routes
+	admin := protected.Group("/admin")
+	admin.Use(middleware.RoleMiddleware(models.RoleAdmin, models.RoleSuperAdmin))
+	admin.Get("/driver-applications", adminHandler.GetDriverApplications)
+	admin.Post("/driver-applications/:id/review", adminHandler.ReviewDriverApplication)
+	admin.Get("/drivers", adminHandler.GetDrivers)
+	admin.Post("/drivers/:id/add-balance", adminHandler.AddDriverBalance)
+	admin.Post("/users/:id/block", adminHandler.BlockUnblockUser)
+	admin.Post("/pricing", adminHandler.SetPricing)
+	admin.Get("/pricing", adminHandler.GetAllPricing)
+	admin.Get("/orders", adminHandler.GetAllOrders)
+	admin.Get("/statistics", adminHandler.GetStatistics)
+	admin.Get("/feedback", adminHandler.GetFeedback)
 
-				// Superadmin only routes
-				superadmin := admin.Group("")
-				superadmin.Use(middleware.RoleMiddleware(models.RoleSuperAdmin))
-				{
-					superadmin.POST("/create-admin", adminHandler.CreateAdmin)
-					superadmin.POST("/users/:id/reset-password", adminHandler.ResetUserPassword)
-				}
-			}
-		}
-	}
+	// Region & District management
+	admin.Post("/regions", regionHandler.CreateRegion)
+	admin.Put("/regions/:id", regionHandler.UpdateRegion)
+	admin.Delete("/regions/:id", regionHandler.DeleteRegion)
+	admin.Post("/districts", regionHandler.CreateDistrict)
+	admin.Put("/districts/:id", regionHandler.UpdateDistrict)
+	admin.Delete("/districts/:id", regionHandler.DeleteDistrict)
 
-	return router
+	// Superadmin routes
+	superadmin := admin.Group("")
+	superadmin.Use(middleware.RoleMiddleware(models.RoleSuperAdmin))
+	superadmin.Post("/create-admin", adminHandler.CreateAdmin)
+	superadmin.Post("/users/:id/reset-password", adminHandler.ResetUserPassword)
+
+	return app
 }
 
 func createDefaultSuperAdmin() {

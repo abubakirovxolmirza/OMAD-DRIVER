@@ -35,5 +35,8 @@ deps: ## Download dependencies
 	go mod download
 	go mod tidy
 
+db-seed: ## Cleanup and reseed the database with Uzbekistan regions, districts and pricing data
+	go run ./cmd/tools/dbseed --force
+
 install-swagger: ## Install swagger CLI
 	go install github.com/swaggo/swag/cmd/swag@latest

@@ -2,9 +2,10 @@ package handlers
 
 import (
 	"database/sql"
-	"net/http"
+	"fmt"
+	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"taxi-service/internal/database"
 	"taxi-service/internal/middleware"
 	"taxi-service/internal/models"
@@ -20,8 +21,8 @@ func NewRatingHandler() *RatingHandler {
 
 // CreateRatingRequest represents rating creation request
 type CreateRatingRequest struct {
-	OrderID int64  `json:"order_id" binding:"required"`
-	Rating  int    `json:"rating" binding:"required,min=1,max=5"`
+	OrderID int64  `json:"order_id" validate:"required"`
+	Rating  int    `json:"rating" validate:"required,min=1,max=5"`
 	Comment string `json:"comment"`
 }
 
@@ -35,13 +36,13 @@ type CreateRatingRequest struct {
 // @Param request body CreateRatingRequest true "Rating details"
 // @Success 201 {object} models.Rating
 // @Router /ratings [post]
-func (h *RatingHandler) CreateRating(c *gin.Context) {
+
+func (h *RatingHandler) CreateRating(c *fiber.Ctx) error {
 	userID, _ := middleware.GetUserID(c)
 
 	var req CreateRatingRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := parseAndValidateJSON(c, &req); err != nil {
+		return err
 	}
 
 	// Verify order belongs to user and is completed
@@ -52,37 +53,31 @@ func (h *RatingHandler) CreateRating(c *gin.Context) {
 	`, req.OrderID, userID).Scan(&order.ID, &order.UserID, &order.DriverID, &order.Status)
 	
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
-		return
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Order not found"})
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
 	}
 
 	if order.Status != models.OrderStatusCompleted {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Can only rate completed orders"})
-		return
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Can only rate completed orders"})
 	}
 
 	if order.DriverID == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Order has no driver assigned"})
-		return
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Order has no driver assigned"})
 	}
 
 	// Check if already rated
 	var existingID int64
-	database.DB.QueryRow("SELECT id FROM ratings WHERE order_id = $1", req.OrderID).Scan(&existingID)
+	_ = database.DB.QueryRow("SELECT id FROM ratings WHERE order_id = $1", req.OrderID).Scan(&existingID)
 	if existingID > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "Order already rated"})
-		return
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Order already rated"})
 	}
 
 	// Begin transaction
 	tx, err := database.DB.Begin()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
 	}
 	defer tx.Rollback()
 
@@ -102,8 +97,7 @@ func (h *RatingHandler) CreateRating(c *gin.Context) {
 		&rating.Rating, &rating.Comment, &rating.CreatedAt,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create rating"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create rating"})
 	}
 
 	// Update driver rating
@@ -113,24 +107,21 @@ func (h *RatingHandler) CreateRating(c *gin.Context) {
 		SELECT AVG(rating), COUNT(*) FROM ratings WHERE driver_id = $1
 	`, *order.DriverID).Scan(&avgRating, &totalRatings)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate rating"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to calculate rating"})
 	}
 
 	_, err = tx.Exec(`
 		UPDATE drivers SET rating = $1, total_ratings = $2 WHERE id = $3
 	`, avgRating, totalRatings, *order.DriverID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update driver rating"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update driver rating"})
 	}
 
 	if err := tx.Commit(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to commit transaction"})
 	}
 
-	c.JSON(http.StatusCreated, rating)
+	return c.Status(fiber.StatusCreated).JSON(rating)
 }
 
 // GetDriverRatings godoc
@@ -141,7 +132,8 @@ func (h *RatingHandler) CreateRating(c *gin.Context) {
 // @Param driver_id path int true "Driver ID"
 // @Success 200 {array} models.Rating
 // @Router /ratings/driver/{driver_id} [get]
-func (h *RatingHandler) GetDriverRatings(c *gin.Context) {
+
+func (h *RatingHandler) GetDriverRatings(c *fiber.Ctx) error {
 	driverID := c.Param("driver_id")
 
 	rows, err := database.DB.Query(`
@@ -149,8 +141,7 @@ func (h *RatingHandler) GetDriverRatings(c *gin.Context) {
 		FROM ratings WHERE driver_id = $1 ORDER BY created_at DESC
 	`, driverID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch ratings"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch ratings"})
 	}
 	defer rows.Close()
 
@@ -167,7 +158,7 @@ func (h *RatingHandler) GetDriverRatings(c *gin.Context) {
 		ratings = append(ratings, rating)
 	}
 
-	c.JSON(http.StatusOK, ratings)
+	return c.Status(fiber.StatusOK).JSON(ratings)
 }
 
 // NotificationHandler handles notification endpoints
@@ -187,7 +178,8 @@ func NewNotificationHandler() *NotificationHandler {
 // @Param unread query bool false "Filter unread only"
 // @Success 200 {array} models.Notification
 // @Router /notifications [get]
-func (h *NotificationHandler) GetMyNotifications(c *gin.Context) {
+
+func (h *NotificationHandler) GetMyNotifications(c *fiber.Ctx) error {
 	userID, _ := middleware.GetUserID(c)
 	unreadOnly := c.Query("unread") == "true"
 
@@ -199,8 +191,7 @@ func (h *NotificationHandler) GetMyNotifications(c *gin.Context) {
 
 	rows, err := database.DB.Query(query, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch notifications"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch notifications"})
 	}
 	defer rows.Close()
 
@@ -217,7 +208,7 @@ func (h *NotificationHandler) GetMyNotifications(c *gin.Context) {
 		notifications = append(notifications, notif)
 	}
 
-	c.JSON(http.StatusOK, notifications)
+	return c.Status(fiber.StatusOK).JSON(notifications)
 }
 
 // MarkNotificationRead godoc
@@ -229,7 +220,8 @@ func (h *NotificationHandler) GetMyNotifications(c *gin.Context) {
 // @Param id path int true "Notification ID"
 // @Success 200 {object} map[string]string
 // @Router /notifications/{id}/read [post]
-func (h *NotificationHandler) MarkNotificationRead(c *gin.Context) {
+
+func (h *NotificationHandler) MarkNotificationRead(c *fiber.Ctx) error {
 	userID, _ := middleware.GetUserID(c)
 	notifID := c.Param("id")
 
@@ -237,11 +229,10 @@ func (h *NotificationHandler) MarkNotificationRead(c *gin.Context) {
 		UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2
 	`, notifID, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update notification"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update notification"})
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Notification marked as read"})
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Notification marked as read"})
 }
 
 // RegionHandler handles region and district endpoints
@@ -254,9 +245,9 @@ func NewRegionHandler() *RegionHandler {
 
 // CreateRegionRequest represents region creation request
 type CreateRegionRequest struct {
-	NameUzLat string `json:"name_uz_lat" binding:"required"`
-	NameUzCyr string `json:"name_uz_cyr" binding:"required"`
-	NameRu    string `json:"name_ru" binding:"required"`
+	NameUzLat string `json:"name_uz_lat" validate:"required"`
+	NameUzCyr string `json:"name_uz_cyr" validate:"required"`
+	NameRu    string `json:"name_ru" validate:"required"`
 }
 
 // UpdateRegionRequest represents region update request
@@ -273,11 +264,11 @@ type UpdateRegionRequest struct {
 // @Produce json
 // @Success 200 {array} models.Region
 // @Router /regions [get]
-func (h *RegionHandler) GetRegions(c *gin.Context) {
+
+func (h *RegionHandler) GetRegions(c *fiber.Ctx) error {
 	rows, err := database.DB.Query("SELECT * FROM regions ORDER BY name_uz_lat")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch regions"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch regions"})
 	}
 	defer rows.Close()
 
@@ -291,7 +282,7 @@ func (h *RegionHandler) GetRegions(c *gin.Context) {
 		regions = append(regions, region)
 	}
 
-	c.JSON(http.StatusOK, regions)
+	return c.Status(fiber.StatusOK).JSON(regions)
 }
 
 // GetRegion godoc
@@ -302,7 +293,8 @@ func (h *RegionHandler) GetRegions(c *gin.Context) {
 // @Param id path int true "Region ID"
 // @Success 200 {object} models.Region
 // @Router /regions/{id} [get]
-func (h *RegionHandler) GetRegion(c *gin.Context) {
+
+func (h *RegionHandler) GetRegion(c *fiber.Ctx) error {
 	regionID := c.Param("id")
 
 	var region models.Region
@@ -310,15 +302,13 @@ func (h *RegionHandler) GetRegion(c *gin.Context) {
 		&region.ID, &region.NameUzLat, &region.NameUzCyr, &region.NameRu, &region.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Region not found"})
-		return
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Region not found"})
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
 	}
 
-	c.JSON(http.StatusOK, region)
+	return c.Status(fiber.StatusOK).JSON(region)
 }
 
 // CreateRegion godoc
@@ -331,11 +321,11 @@ func (h *RegionHandler) GetRegion(c *gin.Context) {
 // @Param request body CreateRegionRequest true "Region details"
 // @Success 201 {object} models.Region
 // @Router /regions [post]
-func (h *RegionHandler) CreateRegion(c *gin.Context) {
+
+func (h *RegionHandler) CreateRegion(c *fiber.Ctx) error {
 	var req CreateRegionRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := parseAndValidateJSON(c, &req); err != nil {
+		return err
 	}
 
 	var region models.Region
@@ -347,11 +337,10 @@ func (h *RegionHandler) CreateRegion(c *gin.Context) {
 		&region.ID, &region.NameUzLat, &region.NameUzCyr, &region.NameRu, &region.CreatedAt,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create region"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create region"})
 	}
 
-	c.JSON(http.StatusCreated, region)
+	return c.Status(fiber.StatusCreated).JSON(region)
 }
 
 // UpdateRegion godoc
@@ -365,87 +354,54 @@ func (h *RegionHandler) CreateRegion(c *gin.Context) {
 // @Param request body UpdateRegionRequest true "Region details"
 // @Success 200 {object} models.Region
 // @Router /regions/{id} [put]
-func (h *RegionHandler) UpdateRegion(c *gin.Context) {
+func (h *RegionHandler) UpdateRegion(c *fiber.Ctx) error {
 	regionID := c.Param("id")
 
 	var req UpdateRegionRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
 
-	// Build dynamic update query
-	query := "UPDATE regions SET "
-	args := []interface{}{}
-	argCount := 1
+	updates := make([]string, 0, 3)
+	args := make([]interface{}, 0, 4)
 
 	if req.NameUzLat != "" {
-		query += "name_uz_lat = $1, "
 		args = append(args, req.NameUzLat)
-		argCount++
+		updates = append(updates, fmt.Sprintf("name_uz_lat = $%d", len(args)))
 	}
 	if req.NameUzCyr != "" {
-		if argCount == 1 {
-			query += "name_uz_cyr = $1, "
-		} else if argCount == 2 {
-			query += "name_uz_cyr = $2, "
-		} else {
-			query += "name_uz_cyr = $3, "
-		}
 		args = append(args, req.NameUzCyr)
-		argCount++
+		updates = append(updates, fmt.Sprintf("name_uz_cyr = $%d", len(args)))
 	}
 	if req.NameRu != "" {
-		if argCount == 1 {
-			query += "name_ru = $1, "
-		} else if argCount == 2 {
-			query += "name_ru = $2, "
-		} else if argCount == 3 {
-			query += "name_ru = $3, "
-		} else {
-			query += "name_ru = $4, "
-		}
 		args = append(args, req.NameRu)
-		argCount++
+		updates = append(updates, fmt.Sprintf("name_ru = $%d", len(args)))
 	}
 
-	if len(args) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
-		return
+	if len(updates) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "No fields to update"})
 	}
 
-	// Remove trailing comma and add WHERE clause
-	query = query[:len(query)-2]
-	if argCount == 2 {
-		query += " WHERE id = $2"
-	} else if argCount == 3 {
-		query += " WHERE id = $3"
-	} else if argCount == 4 {
-		query += " WHERE id = $4"
-	} else {
-		query += " WHERE id = $5"
-	}
 	args = append(args, regionID)
-
+	query := fmt.Sprintf("UPDATE regions SET %s WHERE id = $%d", strings.Join(updates, ", "), len(args))
 	result, err := database.DB.Exec(query, args...)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update region"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update region"})
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Region not found"})
-		return
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Region not found"})
 	}
 
-	// Fetch updated region
 	var region models.Region
-	database.DB.QueryRow("SELECT * FROM regions WHERE id = $1", regionID).Scan(
+	if err := database.DB.QueryRow("SELECT * FROM regions WHERE id = $1", regionID).Scan(
 		&region.ID, &region.NameUzLat, &region.NameUzCyr, &region.NameRu, &region.CreatedAt,
-	)
+	); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch updated region"})
+	}
 
-	c.JSON(http.StatusOK, region)
+	return c.Status(fiber.StatusOK).JSON(region)
 }
 
 // DeleteRegion godoc
@@ -457,22 +413,21 @@ func (h *RegionHandler) UpdateRegion(c *gin.Context) {
 // @Param id path int true "Region ID"
 // @Success 200 {object} map[string]string
 // @Router /regions/{id} [delete]
-func (h *RegionHandler) DeleteRegion(c *gin.Context) {
+
+func (h *RegionHandler) DeleteRegion(c *fiber.Ctx) error {
 	regionID := c.Param("id")
 
 	result, err := database.DB.Exec("DELETE FROM regions WHERE id = $1", regionID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete region"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to delete region"})
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Region not found"})
-		return
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Region not found"})
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Region deleted successfully"})
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Region deleted successfully"})
 }
 
 // GetDistricts godoc
@@ -483,13 +438,13 @@ func (h *RegionHandler) DeleteRegion(c *gin.Context) {
 // @Param id path int true "Region ID"
 // @Success 200 {array} models.District
 // @Router /regions/{id}/districts [get]
-func (h *RegionHandler) GetDistricts(c *gin.Context) {
+
+func (h *RegionHandler) GetDistricts(c *fiber.Ctx) error {
 	regionID := c.Param("id")
 
 	rows, err := database.DB.Query("SELECT * FROM districts WHERE region_id = $1 ORDER BY name_uz_lat", regionID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch districts"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch districts"})
 	}
 	defer rows.Close()
 
@@ -503,15 +458,15 @@ func (h *RegionHandler) GetDistricts(c *gin.Context) {
 		districts = append(districts, district)
 	}
 
-	c.JSON(http.StatusOK, districts)
+	return c.Status(fiber.StatusOK).JSON(districts)
 }
 
 // CreateDistrictRequest represents district creation request
 type CreateDistrictRequest struct {
-	RegionID  int64  `json:"region_id" binding:"required"`
-	NameUzLat string `json:"name_uz_lat" binding:"required"`
-	NameUzCyr string `json:"name_uz_cyr" binding:"required"`
-	NameRu    string `json:"name_ru" binding:"required"`
+	RegionID  int64  `json:"region_id" validate:"required"`
+	NameUzLat string `json:"name_uz_lat" validate:"required"`
+	NameUzCyr string `json:"name_uz_cyr" validate:"required"`
+	NameRu    string `json:"name_ru" validate:"required"`
 }
 
 // UpdateDistrictRequest represents district update request
@@ -529,7 +484,8 @@ type UpdateDistrictRequest struct {
 // @Param id path int true "District ID"
 // @Success 200 {object} models.District
 // @Router /districts/{id} [get]
-func (h *RegionHandler) GetDistrict(c *gin.Context) {
+
+func (h *RegionHandler) GetDistrict(c *fiber.Ctx) error {
 	districtID := c.Param("id")
 
 	var district models.District
@@ -537,15 +493,13 @@ func (h *RegionHandler) GetDistrict(c *gin.Context) {
 		&district.ID, &district.RegionID, &district.NameUzLat, &district.NameUzCyr, &district.NameRu, &district.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "District not found"})
-		return
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "District not found"})
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
 	}
 
-	c.JSON(http.StatusOK, district)
+	return c.Status(fiber.StatusOK).JSON(district)
 }
 
 // CreateDistrict godoc
@@ -558,11 +512,11 @@ func (h *RegionHandler) GetDistrict(c *gin.Context) {
 // @Param request body CreateDistrictRequest true "District details"
 // @Success 201 {object} models.District
 // @Router /districts [post]
-func (h *RegionHandler) CreateDistrict(c *gin.Context) {
+
+func (h *RegionHandler) CreateDistrict(c *fiber.Ctx) error {
 	var req CreateDistrictRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := parseAndValidateJSON(c, &req); err != nil {
+		return err
 	}
 
 	var district models.District
@@ -574,11 +528,10 @@ func (h *RegionHandler) CreateDistrict(c *gin.Context) {
 		&district.ID, &district.RegionID, &district.NameUzLat, &district.NameUzCyr, &district.NameRu, &district.CreatedAt,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create district"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create district"})
 	}
 
-	c.JSON(http.StatusCreated, district)
+	return c.Status(fiber.StatusCreated).JSON(district)
 }
 
 // UpdateDistrict godoc
@@ -592,87 +545,54 @@ func (h *RegionHandler) CreateDistrict(c *gin.Context) {
 // @Param request body UpdateDistrictRequest true "District details"
 // @Success 200 {object} models.District
 // @Router /districts/{id} [put]
-func (h *RegionHandler) UpdateDistrict(c *gin.Context) {
+func (h *RegionHandler) UpdateDistrict(c *fiber.Ctx) error {
 	districtID := c.Param("id")
 
 	var req UpdateDistrictRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
 
-	// Build dynamic update query
-	query := "UPDATE districts SET "
-	args := []interface{}{}
-	argCount := 1
+	updates := make([]string, 0, 3)
+	args := make([]interface{}, 0, 4)
 
 	if req.NameUzLat != "" {
-		query += "name_uz_lat = $1, "
 		args = append(args, req.NameUzLat)
-		argCount++
+		updates = append(updates, fmt.Sprintf("name_uz_lat = $%d", len(args)))
 	}
 	if req.NameUzCyr != "" {
-		if argCount == 1 {
-			query += "name_uz_cyr = $1, "
-		} else if argCount == 2 {
-			query += "name_uz_cyr = $2, "
-		} else {
-			query += "name_uz_cyr = $3, "
-		}
 		args = append(args, req.NameUzCyr)
-		argCount++
+		updates = append(updates, fmt.Sprintf("name_uz_cyr = $%d", len(args)))
 	}
 	if req.NameRu != "" {
-		if argCount == 1 {
-			query += "name_ru = $1, "
-		} else if argCount == 2 {
-			query += "name_ru = $2, "
-		} else if argCount == 3 {
-			query += "name_ru = $3, "
-		} else {
-			query += "name_ru = $4, "
-		}
 		args = append(args, req.NameRu)
-		argCount++
+		updates = append(updates, fmt.Sprintf("name_ru = $%d", len(args)))
 	}
 
-	if len(args) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
-		return
+	if len(updates) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "No fields to update"})
 	}
 
-	// Remove trailing comma and add WHERE clause
-	query = query[:len(query)-2]
-	if argCount == 2 {
-		query += " WHERE id = $2"
-	} else if argCount == 3 {
-		query += " WHERE id = $3"
-	} else if argCount == 4 {
-		query += " WHERE id = $4"
-	} else {
-		query += " WHERE id = $5"
-	}
 	args = append(args, districtID)
-
+	query := fmt.Sprintf("UPDATE districts SET %s WHERE id = $%d", strings.Join(updates, ", "), len(args))
 	result, err := database.DB.Exec(query, args...)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update district"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update district"})
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "District not found"})
-		return
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "District not found"})
 	}
 
-	// Fetch updated district
 	var district models.District
-	database.DB.QueryRow("SELECT * FROM districts WHERE id = $1", districtID).Scan(
+	if err := database.DB.QueryRow("SELECT * FROM districts WHERE id = $1", districtID).Scan(
 		&district.ID, &district.RegionID, &district.NameUzLat, &district.NameUzCyr, &district.NameRu, &district.CreatedAt,
-	)
+	); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch updated district"})
+	}
 
-	c.JSON(http.StatusOK, district)
+	return c.Status(fiber.StatusOK).JSON(district)
 }
 
 // DeleteDistrict godoc
@@ -684,22 +604,21 @@ func (h *RegionHandler) UpdateDistrict(c *gin.Context) {
 // @Param id path int true "District ID"
 // @Success 200 {object} map[string]string
 // @Router /districts/{id} [delete]
-func (h *RegionHandler) DeleteDistrict(c *gin.Context) {
+
+func (h *RegionHandler) DeleteDistrict(c *fiber.Ctx) error {
 	districtID := c.Param("id")
 
 	result, err := database.DB.Exec("DELETE FROM districts WHERE id = $1", districtID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete district"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to delete district"})
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "District not found"})
-		return
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "District not found"})
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "District deleted successfully"})
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "District deleted successfully"})
 }
 
 // FeedbackHandler handles feedback endpoints
@@ -712,7 +631,7 @@ func NewFeedbackHandler() *FeedbackHandler {
 
 // SubmitFeedbackRequest represents feedback submission
 type SubmitFeedbackRequest struct {
-	Message string `json:"message" binding:"required"`
+	Message string `json:"message" validate:"required"`
 }
 
 // SubmitFeedback godoc
@@ -725,13 +644,13 @@ type SubmitFeedbackRequest struct {
 // @Param request body SubmitFeedbackRequest true "Feedback message"
 // @Success 201 {object} models.Feedback
 // @Router /feedback [post]
-func (h *FeedbackHandler) SubmitFeedback(c *gin.Context) {
+
+func (h *FeedbackHandler) SubmitFeedback(c *fiber.Ctx) error {
 	userID, _ := middleware.GetUserID(c)
 
 	var req SubmitFeedbackRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := parseAndValidateJSON(c, &req); err != nil {
+		return err
 	}
 
 	var feedback models.Feedback
@@ -741,11 +660,10 @@ func (h *FeedbackHandler) SubmitFeedback(c *gin.Context) {
 		RETURNING id, user_id, message, created_at
 	`, userID, req.Message).Scan(&feedback.ID, &feedback.UserID, &feedback.Message, &feedback.CreatedAt)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit feedback"})
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to submit feedback"})
 	}
 
 	// TODO: Send to Telegram admin group
 
-	c.JSON(http.StatusCreated, feedback)
+	return c.Status(fiber.StatusCreated).JSON(feedback)
 }

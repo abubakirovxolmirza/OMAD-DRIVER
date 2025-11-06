@@ -229,8 +229,8 @@ Final Price = Discounted Price + Service Fee
 
 ## 📱 Default Seeded Data
 
-### Regions (13)
-Toshkent, Samarqand, Buxoro, Andijon, Farg'ona, Namangan, Qashqadaryo, Surxondaryo, Sirdaryo, Jizzax, Navoiy, Xorazm, Qoraqalpog'iston
+### Regions (14)
+Toshkent shahri, Toshkent viloyati, Andijon, Buxoro, Farg'ona, Jizzax, Xorazm, Namangan, Navoiy, Qashqadaryo, Qoraqalpog'iston, Samarqand, Sirdaryo, Surxondaryo
 
 ### Discounts (4)
 1→0%, 2→10%, 3→15%, 4→20%
@@ -244,7 +244,7 @@ Toshkent, Samarqand, Buxoro, Andijon, Farg'ona, Namangan, Qashqadaryo, Surxondar
 | Component | Technology |
 |-----------|------------|
 | Language | Go 1.21+ |
-| Web Framework | Gin |
+| Web Framework | Fiber v2 |
 | Database | PostgreSQL 12+ |
 | Authentication | JWT |
 | Password Hashing | bcrypt |

@@ -1,61 +1,61 @@
 package middleware
 
 import (
-	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"taxi-service/internal/models"
 	"taxi-service/internal/utils"
 )
 
-// AuthMiddleware validates JWT token
-func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
+// AuthMiddleware validates JWT token and attaches identity to the request context.
+func AuthMiddleware(jwtSecret string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
-			c.Abort()
-			return
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Authorization header required"})
 		}
 
-		// Extract token from "Bearer <token>"
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header format"})
-			c.Abort()
-			return
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid authorization header format"})
 		}
 
-		token := parts[1]
+		token := strings.TrimSpace(parts[1])
+		if token == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid authorization header format"})
+		}
+
 		claims, err := utils.ValidateToken(token, jwtSecret)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
-			c.Abort()
-			return
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid or expired token"})
 		}
 
-		// Set user info in context
-		c.Set("user_id", claims.UserID)
-		c.Set("user_role", claims.Role)
+		c.Locals("user_id", claims.UserID)
+		c.Locals("user_role", claims.Role)
 
-		c.Next()
+		return c.Next()
 	}
 }
 
-// RoleMiddleware checks if user has required role
-func RoleMiddleware(allowedRoles ...models.UserRole) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		roleInterface, exists := c.Get("user_role")
-		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "User role not found"})
-			c.Abort()
-			return
+// RoleMiddleware checks if user has required role.
+func RoleMiddleware(allowedRoles ...models.UserRole) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		roleInterface := c.Locals("user_role")
+		if roleInterface == nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "User role not found"})
 		}
 
-		userRole := roleInterface.(models.UserRole)
+		var userRole models.UserRole
+		switch value := roleInterface.(type) {
+		case models.UserRole:
+			userRole = value
+		case string:
+			userRole = models.UserRole(value)
+		default:
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "User role malformed"})
+		}
 
-		// Check if user role is in allowed roles
 		allowed := false
 		for _, role := range allowedRoles {
 			if userRole == role {
@@ -65,29 +65,43 @@ func RoleMiddleware(allowedRoles ...models.UserRole) gin.HandlerFunc {
 		}
 
 		if !allowed {
-			c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
-			c.Abort()
-			return
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Insufficient permissions"})
 		}
 
-		c.Next()
+		return c.Next()
 	}
 }
 
-// GetUserID retrieves user ID from context
-func GetUserID(c *gin.Context) (int64, bool) {
-	userID, exists := c.Get("user_id")
-	if !exists {
+// GetUserID retrieves user ID from context.
+func GetUserID(c *fiber.Ctx) (int64, bool) {
+	userID := c.Locals("user_id")
+	if userID == nil {
 		return 0, false
 	}
-	return userID.(int64), true
+	switch value := userID.(type) {
+	case int64:
+		return value, true
+	case int:
+		return int64(value), true
+	case float64:
+		return int64(value), true
+	default:
+		return 0, false
+	}
 }
 
-// GetUserRole retrieves user role from context
-func GetUserRole(c *gin.Context) (models.UserRole, bool) {
-	role, exists := c.Get("user_role")
-	if !exists {
+// GetUserRole retrieves user role from context.
+func GetUserRole(c *fiber.Ctx) (models.UserRole, bool) {
+	role := c.Locals("user_role")
+	if role == nil {
 		return "", false
 	}
-	return role.(models.UserRole), true
+	switch value := role.(type) {
+	case models.UserRole:
+		return value, true
+	case string:
+		return models.UserRole(value), true
+	default:
+		return "", false
+	}
 }
